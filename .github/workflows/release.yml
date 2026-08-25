@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  supply-chain-gate:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: Audit pinned binaries and model metadata
+        shell: pwsh
+        run: |
+          . .\scripts\env.ps1
+          uv python install 3.11
+          uv sync --locked --no-editable
+          uv run --no-sync python scripts/audit_release.py
+      - name: Stop until repository URL and release manifest are configured
+        shell: pwsh
+        run: throw "正式仓库地址和经过审计的 LGPL 二进制尚未配置，禁止发布。"

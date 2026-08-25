@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "release_ready": false,
+  "components": [
+    {
+      "id": "ffmpeg-windows-x64-lgpl",
+      "version": "UNPINNED",
+      "source_url": "",
+      "binary_url": "",
+      "sha256": "",
+      "license": "LGPL-2.1-or-later",
+      "required_build_flags": ["--disable-gpl", "--disable-nonfree"]
+    },
+    {
+      "id": "libmpv-windows-x64-lgpl",
+      "version": "UNPINNED",
+      "source_url": "",
+      "binary_url": "",
+      "sha256": "",
+      "license": "LGPL-2.1-or-later",
+      "required_build_flags": ["-Dgpl=false"]
+    }
+  ]
+}
+

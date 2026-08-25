@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voice-subtitle-translator"
+version = "0.1.0"
+description = "Windows-first portable speech-to-subtitle workbench"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "゚八奈見杏菜" }]
+urls = { Repository = "https://github.com/hyiyiasd/voice-subtitle-workbench", Issues = "https://github.com/hyiyiasd/voice-subtitle-workbench/issues" }
+dependencies = [
+  "faster-whisper>=1.2,<2",
+  "httpx>=0.28,<1",
+  "keyring>=25.6,<26",
+  "numpy>=1.26,<3",
+  "onnxruntime>=1.20,<2",
+  "PySide6-Essentials>=6.8,<7",
+  "sherpa-onnx>=1.12,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "pytest-qt>=4.4,<5",
+  "ruff>=0.11,<1",
+  "pyinstaller>=6.12,<7",
+]
+
+[project.scripts]
+voice-subtitle-translator = "voice_subtitle_translator.cli:main"
+vst-worker = "voice_subtitle_translator.worker:main"
+
+[project.gui-scripts]
+voice-subtitle-translator-gui = "voice_subtitle_translator.gui.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voice_subtitle_translator"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".local", ".venv", "data", "build", "dist", "artifacts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

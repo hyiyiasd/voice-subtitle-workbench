@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "silero-vad-v6",
+      "display_name": "Silero VAD v6.2.1 ONNX",
+      "source": "https://github.com/snakers4/silero-vad",
+      "version": "v6.2.1",
+      "license": "MIT",
+      "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+      "size_bytes": 2327524,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 0,
+      "runtime": "onnxruntime-cpu",
+      "downloadable": true,
+      "artifacts": [
+        {
+          "url": "https://github.com/snakers4/silero-vad/raw/v6.2.1/src/silero_vad/data/silero_vad.onnx",
+          "relative_path": "silero_vad.onnx",
+          "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+          "size_bytes": 2327524
+        }
+      ]
+    },
+    {
+      "id": "reazonspeech-k2-ja",
+      "display_name": "ReazonSpeech K2 v2 日语 INT8",
+      "source": "https://huggingface.co/reazon-research/reazonspeech-k2-v2",
+      "version": "291488c8151be24d7da4bf7af26e533fad96e407",
+      "license": "Apache-2.0",
+      "sha256": "",
+      "size_bytes": 160372200,
+      "languages": ["ja"],
+      "recommended_vram_mb": 0,
+      "runtime": "sherpa-onnx",
+      "downloadable": true,
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/reazon-research/reazonspeech-k2-v2/resolve/291488c8151be24d7da4bf7af26e533fad96e407/encoder-epoch-99-avg-1.int8.onnx",
+          "relative_path": "encoder-epoch-99-avg-1.int8.onnx",
+          "sha256": "2c7bd08a8a99f9ddd0d9e458456577b1f6279214e51426f114f9eced44c54e1d",
+          "size_bytes": 154670139
+        },
+        {
+          "url": "https://huggingface.co/reazon-research/reazonspeech-k2-v2/resolve/291488c8151be24d7da4bf7af26e533fad96e407/decoder-epoch-99-avg-1.int8.onnx",
+          "relative_path": "decoder-epoch-99-avg-1.int8.onnx",
+          "sha256": "8f0bff94d38797b03b762634ed03211a8e303d06cc4603cdd0cf4199d6eb1485",
+          "size_bytes": 2959337
+        },
+        {
+          "url": "https://huggingface.co/reazon-research/reazonspeech-k2-v2/resolve/291488c8151be24d7da4bf7af26e533fad96e407/joiner-epoch-99-avg-1.int8.onnx",
+          "relative_path": "joiner-epoch-99-avg-1.int8.onnx",
+          "sha256": "49cc7ea1d3d35a40a27442db5e89996da64bf0e683a903dce76e99e57a12e4de",
+          "size_bytes": 2696970
+        },
+        {
+          "url": "https://huggingface.co/reazon-research/reazonspeech-k2-v2/resolve/291488c8151be24d7da4bf7af26e533fad96e407/tokens.txt",
+          "relative_path": "tokens.txt",
+          "sha256": "2c3ac659818a48a0c04010e0593bbc4d7c8a24a054340b01131499c05fd52def",
+          "size_bytes": 45754
+        }
+      ]
+    },
+    {
+      "id": "reazonspeech-k2-ja-en",
+      "display_name": "ReazonSpeech K2 日英双语",
+      "source": "https://huggingface.co/reazon-research/reazonspeech-k2-v2-ja-en",
+      "version": "upstream-currently-unavailable",
+      "license": "Apache-2.0",
+      "sha256": "",
+      "size_bytes": 0,
+      "languages": ["ja", "en"],
+      "recommended_vram_mb": 0,
+      "runtime": "sherpa-onnx",
+      "downloadable": false,
+      "artifacts": [],
+      "note": "官方仓库当前无法匿名访问；为避免改用来源不明的镜像，暂时禁止自动下载。"
+    },
+    {
+      "id": "faster-whisper-medium",
+      "display_name": "faster-whisper medium",
+      "source": "https://huggingface.co/Systran/faster-whisper-medium",
+      "version": "4d9f76bb96174a5625e9ed85e89be563d98d528c",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 1530571713,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 5000,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/4d9f76bb96174a5625e9ed85e89be563d98d528c/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+          "size_bytes": 1527906378
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/4d9f76bb96174a5625e9ed85e89be563d98d528c/config.json",
+          "relative_path": "config.json",
+          "sha256": "6ab73ee2112387f71d7b70b41ba35ed92f49e145c292c04f2ec666b16387fe91",
+          "size_bytes": 2235
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/4d9f76bb96174a5625e9ed85e89be563d98d528c/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "size_bytes": 2203239
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/4d9f76bb96174a5625e9ed85e89be563d98d528c/vocabulary.txt",
+          "relative_path": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "size_bytes": 459861
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper-large-v3-turbo",
+      "display_name": "faster-whisper large-v3-turbo",
+      "source": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+      "version": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 1621665983,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 4500,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+          "size_bytes": 1617884929
+        },
+        {
+          "url": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/config.json",
+          "relative_path": "config.json",
+          "sha256": "b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+          "size_bytes": 2263
+        },
+        {
+          "url": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/preprocessor_config.json",
+          "relative_path": "preprocessor_config.json",
+          "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+          "size_bytes": 340
+        },
+        {
+          "url": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+          "size_bytes": 2710337
+        },
+        {
+          "url": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/vocabulary.json",
+          "relative_path": "vocabulary.json",
+          "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+          "size_bytes": 1068114
+        }
+      ]
+    }
+  ]
+}

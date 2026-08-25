@@ -1,0 +1,17 @@
+.venv/
+.local/
+build/
+dist/
+artifacts/
+data/
+*.vstproj
+*.vstproj-journal
+*.vstproj-wal
+*.vstproj-shm
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
