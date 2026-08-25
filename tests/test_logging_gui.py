@@ -86,11 +86,12 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
         "导入文件夹",
         "批量操作…",
         "开始识别",
+        "强制暂停",
         "导出字幕",
     ]
     menu_labels = [action.text() for action in window.menuBar().actions()]
     assert menu_labels == ["项目", "处理", "设置", "窗口", "帮助"]
-    assert window.task_tree.columnCount() == 2
+    assert window.task_tree.columnCount() == 1
     assert window.task_dock.toggleViewAction().text() == "任务队列"
     assert window.side_dock.toggleViewAction().text() == "翻译上下文"
     assert not hasattr(window, "detail_log")
@@ -142,17 +143,16 @@ def test_folder_media_wait_for_manual_operation_then_process_in_order(
         "等待选择操作",
         "等待选择操作",
     ]
-    first_progress = window.task_progress[media_files[0].resolve()]
-    assert first_progress.isHidden()
-    assert window.task_tree.isColumnHidden(1)
+    first_item = window.task_items[media_files[0].resolve()]
+    assert first_item.icon(0).isNull()
+    assert window.task_tree.columnCount() == 1
     window._set_media_status(media_files[0], "正在识别", progress=50)
-    assert not first_progress.isHidden()
-    assert not window.task_tree.isColumnHidden(1)
+    assert not first_item.icon(0).isNull()
+    assert window.task_progress[media_files[0].resolve()] == 50
     window._set_media_status(
         media_files[0], "识别完成", progress=100, show_progress=False
     )
-    assert first_progress.isHidden()
-    assert window.task_tree.isColumnHidden(1)
+    assert first_item.icon(0).isNull()
     window._queue_operations(media_files, "transcribe")
     qtbot.waitUntil(lambda: len(processed) == 2)
     assert processed == [media.resolve() for media in media_files]
@@ -166,7 +166,7 @@ def test_folder_media_wait_for_manual_operation_then_process_in_order(
     for index in range(2):
         child = group.child(index)
         assert child.checkState(0) == Qt.CheckState.Checked
-        assert window.task_tree.itemWidget(child, 1) is not None
+        assert child.icon(0).isNull()
     window.close()
 
 

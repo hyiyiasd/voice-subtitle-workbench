@@ -10,6 +10,7 @@ from voice_subtitle_translator.providers.openai_compatible import (
     OfflineModeError,
     OpenAICompatibleProvider,
     ProviderConfig,
+    ProviderRequestError,
 )
 
 
@@ -78,3 +79,32 @@ def test_offline_also_blocks_loopback_http() -> None:
     )
     with pytest.raises(OfflineModeError):
         provider.translate([TranslationItem("a", "text")], target_language="zh-Hans", model="m")
+
+
+def test_interface_test_returns_plain_model_output() -> None:
+    client = httpx.Client(
+        base_url="https://provider.invalid/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json={"choices": [{"message": {"content": "测试成功"}}]}
+            )
+        ),
+    )
+    provider = OpenAICompatibleProvider(
+        ProviderConfig(base_url="https://provider.invalid/v1"), client=client
+    )
+    assert provider.test_connection(text="你好", model="mock") == "测试成功"
+
+
+def test_provider_http_error_includes_safe_response_body() -> None:
+    client = httpx.Client(
+        base_url="https://provider.invalid/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(401, json={"error": {"message": "invalid key"}})
+        ),
+    )
+    provider = OpenAICompatibleProvider(
+        ProviderConfig(base_url="https://provider.invalid/v1"), client=client
+    )
+    with pytest.raises(ProviderRequestError, match=r"(?s)HTTP 401.*invalid key"):
+        provider.test_connection(text="你好", model="mock")

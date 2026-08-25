@@ -3,9 +3,19 @@ from __future__ import annotations
 import re
 from collections import deque
 from pathlib import Path
+from threading import Event, Lock
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QDockWidget,
@@ -35,7 +45,7 @@ from voice_subtitle_translator.domain import ProjectSettings, Segment
 from voice_subtitle_translator.gpu_runtime import GPURuntimeManager, selected_profile
 from voice_subtitle_translator.model_manager import ModelManager
 from voice_subtitle_translator.paths import AppPaths, bundled_resource
-from voice_subtitle_translator.pipeline import PipelineCoordinator
+from voice_subtitle_translator.pipeline import PipelineCoordinator, TranslationCancelledError
 from voice_subtitle_translator.project import Project, quick_file_fingerprint
 from voice_subtitle_translator.providers.openai_compatible import (
     OpenAICompatibleProvider,
@@ -50,7 +60,11 @@ from voice_subtitle_translator.subtitles import (
     can_export,
     export_subtitles,
 )
-from voice_subtitle_translator.transcription import TranscriptionService
+from voice_subtitle_translator.transcription import (
+    TranscriptionCancelledError,
+    TranscriptionService,
+)
+from voice_subtitle_translator.worker_client import WorkerClient
 
 from .batch_operation_dialog import BatchOperationDialog
 from .gpu_settings_dialog import GPUSettingsDialog
@@ -172,6 +186,7 @@ class TranslationThread(QThread):
     progress = Signal(int, int)
     succeeded = Signal(int, int, bool)
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(
         self,
@@ -187,9 +202,14 @@ class TranslationThread(QThread):
         self.config = config
         self.prompt = prompt
         self.glossary = glossary
+        self._stop_requested = Event()
+        self._provider_lock = Lock()
+        self._provider: OpenAICompatibleProvider | None = None
 
     def run(self) -> None:
         provider = OpenAICompatibleProvider(self.config)
+        with self._provider_lock:
+            self._provider = provider
         try:
             with Project.open(self.project_path) as project:
                 result = PipelineCoordinator(project).translate_pending(
@@ -197,18 +217,40 @@ class TranslationThread(QThread):
                     prompt=self.prompt,
                     glossary=self.glossary,
                     on_batch_complete=lambda done, total: self.progress.emit(done, total),
+                    should_stop=self._stop_requested.is_set,
                 )
             self.succeeded.emit(result.completed, result.cached, result.stopped_by_switch)
+        except TranslationCancelledError:
+            self.cancelled.emit()
         except Exception as exc:
-            self.failed.emit(str(exc))
+            if self._stop_requested.is_set():
+                self.cancelled.emit()
+            else:
+                self.failed.emit(str(exc))
         finally:
-            provider.close()
+            try:
+                provider.close()
+            except Exception:
+                pass
+            with self._provider_lock:
+                self._provider = None
+
+    def force_stop(self) -> None:
+        self._stop_requested.set()
+        with self._provider_lock:
+            provider = self._provider
+        if provider:
+            try:
+                provider.close()
+            except Exception:
+                pass
 
 
 class TranscriptionThread(QThread):
     progress = Signal(str, int, int)
     succeeded = Signal(str, int)
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(
         self,
@@ -226,6 +268,20 @@ class TranscriptionThread(QThread):
         self.model_id = model_id
         self.device = device
         self.compute_type = compute_type
+        self._stop_requested = Event()
+        self._worker_lock = Lock()
+        self._active_worker: WorkerClient | None = None
+
+    def _worker_changed(self, worker: WorkerClient | None) -> None:
+        with self._worker_lock:
+            self._active_worker = worker
+
+    def force_stop(self) -> None:
+        self._stop_requested.set()
+        with self._worker_lock:
+            worker = self._active_worker
+        if worker:
+            worker.terminate()
 
     def run(self) -> None:
         try:
@@ -243,11 +299,18 @@ class TranscriptionThread(QThread):
                     on_progress=lambda stage, done, total: self.progress.emit(
                         stage, done, total
                     ),
+                    should_stop=self._stop_requested.is_set,
+                    on_worker_change=self._worker_changed,
                 )
                 count = len(project.list_segments())
             self.succeeded.emit(task_id, count)
+        except TranscriptionCancelledError:
+            self.cancelled.emit()
         except Exception as exc:
-            self.failed.emit(str(exc))
+            if self._stop_requested.is_set():
+                self.cancelled.emit()
+            else:
+                self.failed.emit(str(exc))
 
 
 class MainWindow(QMainWindow):
@@ -266,7 +329,7 @@ class MainWindow(QMainWindow):
         self.current_action = "auto"
         self.task_groups: dict[Path, QTreeWidgetItem] = {}
         self.task_items: dict[Path, QTreeWidgetItem] = {}
-        self.task_progress: dict[Path, QProgressBar] = {}
+        self.task_progress: dict[Path, int] = {}
         self.task_status: dict[Path, str] = {}
         self.detail_media_path: Path | None = None
         self.setWindowTitle(f"{APP_NAME} {__version__}")
@@ -348,11 +411,9 @@ class MainWindow(QMainWindow):
         self.task_dock = QDockWidget("ä»»åŠ¡é˜Ÿåˆ—", self)
         self.task_dock.setObjectName("task_queue_dock")
         self.task_tree = QTreeWidget()
-        self.task_tree.setHeaderLabels(["æ–‡ä»¶å¤¹ / åª’ä½“", ""])
+        self.task_tree.setHeaderLabels(["æ–‡ä»¶å¤¹ / åª’ä½“"])
         self.task_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.task_tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.task_tree.setColumnWidth(1, 90)
-        self.task_tree.setColumnHidden(1, True)
+        self.task_tree.setIconSize(QSize(42, 10))
         self.task_tree.itemDoubleClicked.connect(self._open_task_media)
         self.task_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.task_tree.customContextMenuRequested.connect(self._show_task_context_menu)
@@ -377,8 +438,1086 @@ class MainWindow(QMainWindow):
         new_action.triggered.connect(self.new_project)
         open_action = QAction("æ‰“å¼€é¡¹ç›®", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
-        open_action.triggered.connect(self.open_projec×NvîÚ$z{-®éÜj×–×÷'B§6öà ¢6VÆbç&ö¦V7Bæ6öææV7F–öâæW†V7WFR€¢%UDDR6VvÖVçG24UBVÆ—G•öfÆw5ö§6öãÓòt„U$R–CÓò"À¢†§6öâæGV×2‡6÷'FVB‡6VvÖVçBçVÆ—G•öfÆw2’ÂVç7W&Uö66–“ÔfÇ6R’Â6VvÖVçBæ–B’À¢¢6VÆbçF&ÆUöÖöFVÂç&Vg&W6‚‚¢6VÆbåöf–ÇFW%÷&ö&ÆVÕ÷&÷w2‡6VÆbç&ö&ÆV×5ö7F–öâæ—46†V6¶VB‚’¢&ö&ÆVÕö6÷VçBÒ7VÒ†&ööÂ†—FVÒçVÆ—G•öfÆw2’f÷"—FVÒ–â6VvÖVçG2¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR†b.j8iú^ZèÎh‰ûÉ§·&ö&ÆVÕö6÷VçGÒiÚZÙ~[™^™ÈŠhk:ŽhHò"ÂS ¢FVb6†÷u÷G&ç6ÆF–öå÷6WGF–æw2‡6VÆb’Óâ&ööÃ ¢&÷f–FW"Ò6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öå÷&÷f–FW"÷"&÷Væ’ ¢7&VFVçF–Å÷7F÷&RÒ7&VFVçF–Å7F÷&R‚¢†5÷6fVEö¶W’Ò&ööÂ†7&VFVçF–Å÷7F÷&RævWB‡&÷f–FW"’¢F–ÆörÒG&ç6ÆF–öå6WGF–æw4F–Æör€¢&÷f–FW#×&÷f–FW"À¢&6U÷W&Ã×6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåö&6U÷W&ÂÀ¢ÖöFVÃ×6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåöÖöFVÂÀ¢†5÷6fVEö¶W“Ö†5÷6fVEö¶W’À¢&VçC×6VÆbÀ¢¢–bF–ÆöræW†V2‚’ÒF–ÆöräF–Æöt6öFRä66WFVC ¢&WGW&âfÇ6P¢fÇVW2ÒF–ÆörçfÇVW2‚¢–bæ÷BfÇVW2æ&6U÷W&Â÷"æ÷BfÇVW2æÖöFVÃ ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.˜XÞ{ÚîKˆÞZèÎi[B"Â.Šû~Z¾Xi’&6RU$ÂY(ÎjŠYè¾YÞz{8""¢&WGW&âfÇ6P¢—5öÆö6ÂÒfÇVW2æ&6U÷W&Âç7F'G7v—F‚‚‚&‡GG¢òó#rããã"Â&‡GG¢òöÆö6Æ†÷7B"’¢–bfÇVW2æ•ö¶W“ ¢7&VFVçF–Å÷7F÷&Rç6WB‡fÇVW2ç&÷f–FW"ÂfÇVW2æ•ö¶W’¢VÆ–bæ÷B—5öÆö6ÂæBæ÷B7&VFVçF–Å÷7F÷&RævWB‡fÇVW2ç&÷f–FW"“ ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.{Ë®[	’¶W’"Â.‹ùÎzˆ¾{û¾ŠùiÈÞXª™ÈŠh’¶Wž8""¢&WGW&âfÇ6P¢6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öå÷&÷f–FW"ÒfÇVW2ç&÷f–FW ¢6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåö&6U÷W&ÂÒfÇVW2æ&6U÷W&À¢6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåöÖöFVÂÒfÇVW2æÖöFVÀ¢6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öå÷7G'V7GW&VEö÷WGWBÒfÇVW2ç7G'V7GW&VEö÷WGW@¢6VÆbç6WGF–æw5÷7F÷&Rç6fR‡6VÆbævÆö&Å÷6WGF–æw2¢–b6VÆbç&ö¦V7C ¢6WGF–æw2Ò6VÆbç&ö¦V7BævWE÷6WGF–æw2‚¢6WGF–æw2çG&ç6ÆF–öå÷&÷f–FW"ÒfÇVW2ç&÷f–FW ¢6WGF–æw2çG&ç6ÆF–öåöÖöFVÂÒfÇVW2æÖöFVÀ¢6VÆbç&ö¦V7Bç6fU÷6WGF–æw2‡6WGF–æw2¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR†b.[{.KùÞZÙŽ{û¾ŠùiÈÞXªûÉ§·fÇVW2ç&÷f–FW'Òò·fÇVW2æÖöFVÇÒ"Âc¢&WGW&âG'VP ¢FVbG&ç6ÆFU÷VæF–ær‡6VÆb’ÓâæöæS ¢–bæ÷B6VÆbå÷&WV—&U÷&ö¦V7B‚“ ¢&WGW&à¢–bæ÷B6VÆbç&ö¦V7BævWE÷6WGF–æw2‚’çG&ç6ÆF–öåöVæ&ÆVC ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.iÊ®Y
-þyJŽ{û¾Šù"Â.Šû~XXŽ[ÈY
-þšn˜:Ž(	ÎY
-þyJŽ{û¾Šù(	Þ[ÈX[>8""¢&WGW&à¢–b6VÆbçG&ç6ÆF–öå÷F‡&VBæB6VÆbçG&ç6ÆF–öå÷F‡&VBæ—5'Vææ–ær‚“ ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.{û¾ŠùjÚ>YÊŽ‹ùŠÂ"Â.Šû~zØž[è^[Ù>X˜Þ{û¾Šùh›žjÊZèÎh‰8""¢&WGW&à¢–b€¢æ÷B6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåö&6U÷W&À¢÷"æ÷B6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåöÖöFVÀ¢’æBæ÷B6VÆbç6†÷u÷G&ç6ÆF–öå÷6WGF–æw2‚“ ¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR‚.ŠønXŠ¾[{.ZèÎh‰ûÉ¾[	®iÊ®˜XÞ{Úî{û¾ŠùiÈÞXª"Âƒ¢–b6VÆbæ7W'&VçEöÖVF–÷Fƒ ¢6VÆbåöf–æ—6…ö7W'&VçEöÖVF–‚.zØž[è^˜XÞ{Úî{û¾ŠùiÈÞXª"¢&WGW&à¢6WGF–æw2Ò6VÆbç&ö¦V7BævWE÷6WGF–æw2‚¢&÷f–FW%ö–BÒ6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öå÷&÷f–FW"÷"&÷Væ’Ö6ö×F–&ÆR ¢&6U÷W&ÂÒ6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåö&6U÷W&À¢ÖöFVÂÒ6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåöÖöFVÀ¢—5öÆö6ÂÒ&6U÷W&Âç7F'G7v—F‚‚‚&‡GG¢òó#rããã"Â&‡GG¢òöÆö6Æ†÷7B"’¢¶W’Ò""–b—5öÆö6ÂVÇ6R„7&VFVçF–Å7F÷&R‚’ævWB‡&÷f–FW%ö–B’÷"""¢–bæ÷B—5öÆö6ÂæBæ÷B¶W“ ¢–bæ÷B6VÆbç6†÷u÷G&ç6ÆF–öå÷6WGF–æw2‚“ ¢–b6VÆbæ7W'&VçEöÖVF–÷Fƒ ¢6VÆbåöf–æ—6…ö7W'&VçEöÖVF–‚.zØž[è^˜XÞ{Úî{û¾ŠùiÈÞXª"¢&WGW&à¢&÷f–FW%ö–BÒ6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öå÷&÷f–FW ¢&6U÷W&ÂÒ6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåö&6U÷W&À¢ÖöFVÂÒ6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öåöÖöFVÀ¢—5öÆö6ÂÒ&6U÷W&Âç7F'G7v—F‚‚‚&‡GG¢òó#rããã"Â&‡GG¢òöÆö6Æ†÷7B"’¢¶W’Ò""–b—5öÆö6ÂVÇ6R„7&VFVçF–Å7F÷&R‚’ævWB‡&÷f–FW%ö–B’÷"""¢–bæ÷B—5öÆö6ÂæBæ÷B¶W“ ¢&WGW&à¢6WGF–æw2çG&ç6ÆF–öå÷&÷f–FW"Ò&÷f–FW%ö–@¢6WGF–æw2çG&ç6ÆF–öåöÖöFVÂÒÖöFVÀ¢6VÆbç&ö¦V7Bç6fU÷6WGF–æw2‡6WGF–æw2¢6VÆbå÷6fU÷6–FUö6öçFW‡B‚¢F‡&VBÒG&ç6ÆF–öåF‡&VB€¢&ö¦V7E÷Fƒ×6VÆbç&ö¦V7BçF‚À¢6öæf–sÕ&÷f–FW$6öæf–r€¢–C×&÷f–FW%ö–BÀ¢&6U÷W&ÃÖ&6U÷W&ÂÀ¢•ö¶W“Ö¶W’À¢7G'V7GW&VEö÷WGWC×6VÆbævÆö&Å÷6WGF–æw2çG&ç6ÆF–öå÷7G'V7GW&VEö÷WGWBÀ¢öffÆ–æS×6WGF–æw2æöffÆ–æRÀ¢’À¢&ö×C×6VÆbç&ö×EöVF—BçFõÆ–åFW‡B‚’À¢vÆ÷76'“Õ÷'6UövÆ÷76'’‡6VÆbævÆ÷76'•öVF—BçFõÆ–åFW‡B‚’’À¢&VçC×6VÆbÀ¢¢–b6VÆbæ7W'&VçEöÖVF–÷Fƒ ¢6VÆbå÷6WEöÖVF–÷7FGW2€¢6VÆbæ7W'&VçEöÖVF–÷F‚À¢b.{û¾ŠùKŠÒ+r·&÷f–FW%ö–GÒò¶ÖöFVÇÒ"À¢&öw&W73ÓÀ¢6†÷u÷&öw&W73ÕG'VRÀ¢¢F‡&VBç&öw&W72æ6öææV7B‡6VÆbå÷G&ç6ÆF–öå÷&öw&W72¢F‡&VBç&öw&W72æ6öææV7B€¢ÆÖ&FFöæRÂF÷FÃ¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR†b.{û¾Šùh›žjÊ¶FöæWÒ÷·F÷FÇÒ"¢¢F‡&VBç7V66VVFVBæ6öææV7B‡6VÆbå÷G&ç6ÆF–öå÷7V66VVFVB¢F‡&VBæf–ÆVBæ6öææV7B‡6VÆbå÷G&ç6ÆF–öåöf–ÆVB¢F‡&VBæf–æ—6†VBæ6öææV7B‡F‡&VBæFVÆWFTÆFW"¢F‡&VBæf–æ—6†VBæ6öææV7B†ÆÖ&F¢6WFGG"‡6VÆbÂ'G&ç6ÆF–öå÷F‡&VB"ÂæöæR’¢6VÆbçG&ç6ÆF–öå÷F‡&VBÒF‡&V@¢F‡&VBç7F'B‚ ¢FVb÷G&ç6ÆF–öå÷&öw&W72‡6VÆbÂ6ö×ÆWFVC¢–çBÂF÷FÃ¢–çB’ÓâæöæS ¢–bæ÷B6VÆbæ7W'&VçEöÖVF–÷Fƒ ¢&WGW&à¢W&6VçBÒ&÷VæB†6ö×ÆWFVBòÖ‚‡F÷FÂÂ’¢¢6VÆbå÷6WEöÖVF–÷7FGW2€¢6VÆbæ7W'&VçEöÖVF–÷F‚À¢b.jÚ>YÊŽ{û¾ŠùZÙ~[™R¶6ö×ÆWFVGÒ÷·F÷FÇÒ"À¢&öw&W73×W&6VçBÀ¢ ¢FVb÷G&ç6ÆF–öå÷7V66VVFVB‡6VÆbÂ6ö×ÆWFVC¢–çBÂ66†VC¢–çBÂ7F÷VC¢&ööÂ’ÓâæöæS ¢–b6VÆbç&ö¦V7C ¢6VÆbçF&ÆUöÖöFVÂç&Vg&W6‚‚¢6VÆbåöf–ÇFW%÷&ö&ÆVÕ÷&÷w2‡6VÆbç&ö&ÆV×5ö7F–öâæ—46†V6¶VB‚’¢–b7F÷VC ¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR€¢b.{û¾Šù[{.i¨.XÎûÉ®ZèÎh‰¶6ö×ÆWFVGÒiÚûÈÎ{É>ZÙŽYÞKŠÒ¶66†VGÒiÚ"Âs ¢¢6VÆbåöf–æ—6…ö7W'&VçEöÖVF–†b.{û¾Šù[{.i¨.XÂ+r¶6ö×ÆWFVGÒiÚ"¢VÇ6S ¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR†b.{û¾ŠùZèÎh‰¶6ö×ÆWFVGÒiÚûÈÎ{É>ZÙŽYÞKŠÒ¶66†VGÒiÚ"Âs¢6VÆbåöf–æ—6…ö7W'&VçEöÖVF–†b.[{.ZèÎh‰+r{û¾Šù¶6ö×ÆWFVGÒiÚ" ¢FVb÷G&ç6ÆF–öåöf–ÆVB‡6VÆbÂÖW76vS¢7G"’ÓâæöæS ¢ÖW76vT&÷‚æ7&—F–6Â‡6VÆbÂ.{û¾ŠùZK‹JR"ÂÖW76vR¢6VÆbåöf–æ—6…ö7W'&VçEöÖVF–‚.{û¾ŠùZK‹JR"¢–b6VÆbç&ö¦V7C ¢6VÆbçF&ÆUöÖöFVÂç&Vg&W6‚‚ ¢FVb6V&6…÷&WÆ6R‡6VÆb’ÓâæöæS ¢–bæ÷B6VÆbå÷&WV—&U÷&ö¦V7B‚“ ¢&WGW&à¢6÷W&6RÂö²Ò–çWDF–ÆörævWEFW‡B‡6VÆbÂ.i	Î{J.i»þhÚ""Â.iú^h›îXéþih~ûÉ¢"¢–bæ÷Bö²÷"æ÷B6÷W&6S ¢&WGW&à¢&WÆ6VÖVçBÂö²Ò–çWDF–ÆörævWEFW‡B‡6VÆbÂ.i	Î{J.i»þhÚ""Â.i»þhÚ.K‹®ûÉ¢"¢–bæ÷Bö³ ¢&WGW&à¢6†ævVBÒ ¢f÷"6VvÖVçB–â6VÆbç&ö¦V7BæÆ—7E÷6VvÖVçG2‚“ ¢–b6÷W&6R–â6VvÖVçBç6÷W&6U÷FW‡C ¢6VÆbç&ö¦V7BçWFFU÷6÷W&6U÷FW‡B€¢6VvÖVçBæ–BÂ6VvÖVçBç6÷W&6U÷FW‡Bç&WÆ6R‡6÷W&6RÂ&WÆ6VÖVçB’ÂÆö6³ÕG'VP¢¢6†ævVB³Ò¢6VÆbçF&ÆUöÖöFVÂç&Vg&W6‚‚¢6VÆbåöf–ÇFW%÷&ö&ÆVÕ÷&÷w2‡6VÆbç&ö&ÆV×5ö7F–öâæ—46†V6¶VB‚’¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR†b.[{.i»þhÚ"¶6†ævVGÒiÚZÙ~[™R"ÂS ¢FVböf–ÇFW%÷&ö&ÆVÕ÷&÷w2‡6VÆbÂVæ&ÆVC¢&ööÂ’ÓâæöæS ¢f÷"&÷rÂ6VvÖVçB–âVçVÖW&FR‡6VÆbçF&ÆUöÖöFVÂç6VvÖVçG2“ ¢6VÆbçF&ÆRç6WE&÷t†–FFVâ‡&÷rÂVæ&ÆVBæBæ÷B&ööÂ‡6VvÖVçBçVÆ—G•öfÆw2’ ¢FVbW‡÷'EöF–Æör‡6VÆb’ÓâæöæS ¢–bæ÷B6VÆbå÷&WV—&U÷&ö¦V7B‚“ ¢&WGW&à¢ÖVF–Ò6VÆbç&ö¦V7Bç&W6öÇfUöÖVF–‚¢–bÖVF–—2æöæS ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.k*iÈžZ©.KÙ2"Â.šžyºîk*iÈžXúþyJŽZ©.KÙ>ûÈÎizk9^yIþh‰ZÙ~[™^ih~K»nYÞ8""¢&WGW&à¢6†ö–6W2Ò².Xéþihr%Ð¢ÆÆ÷vVBÂ&V6öâÒ6åöW‡÷'B‡6VÆbç&ö¦V7BæÆ—7E÷6VvÖVçG2‚’ÂW‡÷'D6öçFVçBåE$å4ÄD”ôâ¢–bÆÆ÷vVC ¢6†ö–6W2æW‡FVæB…².Šùihr"Â.XøÎŠúÒ%Ò¢–bÆVâ†6†ö–6W2’ÓÒ ¢6öçFVçEöæÖRÒ.Xéþihr ¢VÇ6S ¢6öçFVçEöæÖRÂö²Ò–çWDF–ÆörævWD—FVÒ€¢6VÆbÂ.ZûÎX{®Xh^Zë’"Â.Xh^ZëžûÉ¢"Â6†ö–6W2ÂVF—F&ÆSÔfÇ6P¢¢–bæ÷Bö³ ¢&WGW&à¢6öçFVçEöÖÒ°¢.Xéþihr#¢W‡÷'D6öçFVçBå4õU$4RÀ¢.Šùihr#¢W‡÷'D6öçFVçBåE$å4ÄD”ôâÀ¢.XøÎŠúÒ#¢W‡÷'D6öçFVçBä$”Ä”äuTÂÀ¢Ð¢÷WGWEöF—&V7F÷'’Ò6VÆbçF‡2æFFò'7V'F—FÆW2"ò6öçFVçEöæÖP¢÷WGWEöF—&V7F÷'’æÖ¶F—"‡&VçG3ÕG'VRÂW†—7Eöö³ÕG'VR¢F‚Ò÷WGWEöF—&V7F÷'’òb'¶ÖVF–ç7FV×Òç7'B ¢–bF‚æW†—7G2‚“ ¢ç7vW"ÒÖW76vT&÷‚çVW7F–öâ€¢6VÆbÀ¢.Šhny¹n[{.iÈžZÙ~[™R"À¢b.ZÙ~[™^ih~K»n[{.{¸þZÙŽYÊŽûÉ¥Æç·F‡ÕÆåÆîiŠþY
-nŠhny¹nûÉò"À¢¢–bç7vW"ÒÖW76vT&÷‚å7FæF&D'WGFöâå–W3 ¢&WGW&à¢G'“ ¢W‡÷'E÷7V'F—FÆW2€¢6VÆbç&ö¦V7BæÆ—7E÷6VvÖVçG2‚’À¢F‚À¢÷WGWEöf÷&ÖCÔW‡÷'Df÷&ÖBå5%BÀ¢6öçFVçCÖ6öçFVçEöÖ¶6öçFVçEöæÖUÒÀ¢¢6VÆbç7FGW4&"‚’ç6†÷tÖW76vR†b.[{.ZûÎX{®ûÉ§·F‡Ò"ÂS¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ€¢6VÆbÀ¢.ZûÎX{®ZèÎh‰"À¢b.[{.hÈžZ©.KÙ>ih~K»nYÞZûÎX{®ûÉ¥Æç·F‡ÕÆåÆâ ¢.Xúþ˜	®‹ø~(	Îšžyºâ(i"h™>[ÈZÙ~[™^ih~K»nZKž(	Þiú^yÈ¾8""À¢¢W†6WBG&ç6ÆF–öåVæf–Æ&ÆTW'&÷# ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.izk9^ZûÎX{®Šùihr"Â&V6öâ¢W†6WBW†6WF–öâ2W†3 ¢ÖW76vT&÷‚æ7&—F–6Â‡6VÆbÂ.ZûÎX{®ZK‹JR"Â7G"†W†2’ ¢FVb÷Vå÷7V'F—FÆUöföÆFW"‡6VÆb’ÓâæöæS ¢&ö÷BÒ6VÆbçF‡2æFFò'7V'F—FÆW2 ¢f÷"æÖR–â‚.Xéþihr"Â.Šùihr"Â.XøÎŠúÒ"“ ¢‡&ö÷BòæÖR’æÖ¶F—"‡&VçG3ÕG'VRÂW†—7Eöö³ÕG'VR¢FW6·F÷6W'f–6W2æ÷VåW&Â…W&Âæg&öÔÆö6Äf–ÆR‡7G"‡&ö÷Bç&W6öÇfR‚’’’ ¢FVb÷6VVµ÷6VÆV7FVB‡6VÆbÂ–æFWƒ¢ÖöFVÄ–æFW‚’ÓâæöæS ¢–b–æFW‚æ—5fÆ–B‚’æB–æFW‚ç&÷r‚’ÂÆVâ‡6VÆbçF&ÆUöÖöFVÂç6VvÖVçG2“ ¢6VÆbçÆ–W"ç6VVµö×2‡6VÆbçF&ÆUöÖöFVÂç6VvÖVçG5¶–æFW‚ç&÷r‚•Òç7F'Eö×2 ¢FVb÷&WV—&U÷&ö¦V7B‡6VÆb’Óâ&ööÃ ¢–b6VÆbç&ö¦V7C ¢&WGW&âG'VP¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ‡6VÆbÂ.k*iÈžšžyºâ"Â.Šû~XXŽik[»®h‰nh™>[Èçg7G&ö¢šžyºî8""¢&WGW&âfÇ6P ¢FVb6†÷uö&÷WB‡6VÆb’ÓâæöæS ¢ÖW76vT&÷‚æ&÷WB€¢6VÆbÀ¢b.X[>K¨ç´ôäÔWÒ"À¢b'´ôäÔWÒµõ÷fW'6–öåõ÷ÕÆåÆîKÙÎˆ^ûÉ§´UD„õ'ÕÆä.z¹žûÉ§´$”Ä”$”Ä•õU$ÇÕÆâ ¢b$v—D‡V.ûÉ§´t•D…T%õU$ÇÕÆîZéŽikžx˜ŽiÊÎûÉ¤v—D‡V"&VÆV6W5ÆîŠëŽXúþŠøûÉ¤Ô•EÆåÆâ ¢.zÊÎKˆžikž{¸NK»nŠëŽXúþŠúnŠxD„•$Eõ%E•ôäõD”4U2æÖN8""À¢ ¢FVbG&tVçFW$WfVçB‡6VÆbÂWfVçB’ÓâæöæS¢2æ÷¢ãƒ ¢–bWfVçBæÖ–ÖTFF‚’æ†5W&Ç2‚“ ¢WfVçBæ66WE&÷÷6VD7F–öâ‚ ¢FVbG&÷WfVçB‡6VÆbÂWfVçB’ÓâæöæS¢2æ÷¢ãƒ ¢F‡2ÒµF‚†—FVÒçFôÆö6Äf–ÆR‚’’f÷"—FVÒ–âWfVçBæÖ–ÖTFF‚’çW&Ç2‚’–b—FVÒæ—4Æö6Äf–ÆR‚•Ð¢–bæ÷BF‡3 ¢&WGW&à¢&ö¦V7G2Ò·F‚f÷"F‚–âF‡2–bF‚ç7Vff—‚æÆ÷vW"‚’ÓÒ"çg7G&ö¢%Ð¢–b&ö¦V7G3 ¢6VÆbåö÷Vå÷&ö¦V7E÷F‚‡&ö¦V7G5³Ò¢WfVçBæ66WE&÷÷6VD7F–öâ‚¢&WGW&à¢f÷"F‚–âF‡3 ¢&W6öÇfVBÒF‚ç&W6öÇfR‚¢–b&W6öÇfVBæ—5öF—"‚“ ¢ÖVF–öf–ÆW2Ò6÷'FVB€¢€¢—FVÒç&W6öÇfR‚¢f÷"—FVÒ–â&W6öÇfVBç&vÆö"‚"¢"¢–b—FVÒæ—5öf–ÆR‚’æB—FVÒç7Vff—‚æÆ÷vW"‚’–âÔTD”õ5Tdd•„U0¢’À¢¶W“ÖÆÖ&F—FVÓ¢7G"†—FVÒ’æ66VföÆB‚’À¢¢6VÆbåöVçVWVUöÖVF–öf–ÆW2†ÖVF–öf–ÆW2Â&W6öÇfVB¢VÆ–b&W6öÇfVBç7Vff—‚æÆ÷vW"‚’–âÔTD”õ5Tdd•„U3 ¢6VÆbåöVçVWVUöÖVF–öf–ÆW2…·&W6öÇfVEÒÂ&W6öÇfVBç&VçB¢WfVçBæ66WE&÷÷6VD7F–öâ‚ ¢FVb6Æ÷6TWfVçB‡6VÆbÂWfVçB’ÓâæöæS¢2æ÷¢ãƒ ¢–b6VÆbçG&ç67&—F–öå÷F‡&VBæB6VÆbçG&ç67&—F–öå÷F‡&VBæ—5'Vææ–ær‚“ ¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ€¢6VÆbÀ¢.ŠønXŠ¾K»¾Xª[	®iÊ®{¹>iÙò"À¢.[Ù>X˜ÞŠønXŠ¾h›žjÊZèÎh‰[›nKùÞZÙŽX˜ÞKˆÞˆ;ÞX[>™zÞzˆ¾[¨þ8.jŠYè¾‹ù¾zˆ¾[È.[‹Ž˜X{®YîûÈÎšžyºîXúþh.ZHÞ8""À¢¢WfVçBæ–væ÷&R‚¢&WGW&à¢–b6VÆbçG&ç6ÆF–öå÷F‡&VBæB6VÆbçG&ç6ÆF–öå÷F‡&VBæ—5'Vææ–ær‚“ ¢–b6VÆbç&ö¦V7BæB6VÆbç&ö¦V7BævWE÷6WGF–æw2‚’çG&ç6ÆF–öåöVæ&ÆVC ¢—VÆ–æT6ö÷&F–æF÷"‡6VÆbç&ö¦V7B’ç6WE÷G&ç6ÆF–öåöVæ&ÆVB„fÇ6R¢6VÆbçG&ç6ÆF–öå÷FövvÆRæ&Æö6µ6–væÇ2…G'VR¢6VÆbçG&ç6ÆF–öå÷FövvÆRç6WD6†V6¶VB„fÇ6R¢6VÆbçG&ç6ÆF–öå÷FövvÆRæ&Æö6µ6–væÇ2„fÇ6R¢ÖW76vT&÷‚æ–æf÷&ÖF–öâ€¢6VÆbÀ¢.{û¾Šùh›žjÊ[	®iÊ®{¹>iÙò"À¢.[{.XÎjÚ.‹>[ªnikh›žjÊ8.Šû~zØž[è^[Ù>X˜ÞŠû~k.KùÞZÙŽZèÎh‰YîXhÞX[>™zÞzˆ¾[¨þ8""À¢¢WfVçBæ–væ÷&R‚¢&WGW&à¢–b6VÆbç&ö¦V7C ¢6VÆbå÷6fU÷6–FUö6öçFW‡B‚¢6VÆbç&ö¦V7Bæ6Æ÷6R‚¢6VÆbç&ö¦V7BÒæöæP¢7WW"‚’æ6Æ÷6TWfVçB†WfVçB ¢FVb÷6fU÷6–FUö6öçFW‡B‡6VÆb’ÓâæöæS ¢–bæ÷B6VÆbç&ö¦V7C ¢&WGW&à¢6VÆbç&ö¦V7Bç6fUö7F—fU÷&ö×B‡6VÆbç&ö×EöVF—BçFõÆ–åFW‡B‚’¢6VÆbç&ö¦V7Bç6fUövÆ÷76'’…÷'6UövÆ÷76'’‡6VÆbævÆ÷76'•öVF—BçFõÆ–åFW‡B‚’’  ¦FVböf÷&ÖEöÖ–ÆÆ—6V6öæG2‡fÇVS¢–çB’Óâ7G# ¢†÷W'2Â&VÖ–æFW"ÒF—fÖöB‡fÇVRÂ5ócó¢Ö–çWFW2Â&VÖ–æFW"ÒF—fÖöB‡&VÖ–æFW"Âcó¢6V6öæG2ÂÖ–ÆÆ—6V6öæG2ÒF—fÖöB‡&VÖ–æFW"Âó¢&WGW&âb'¶†÷W'3£&GÓ§¶Ö–çWFW3£&GÓ§·6V6öæG3£&GÒç¶Ö–ÆÆ—6V6öæG3£6GÒ   ¦FVb÷'6U÷F–ÖW7F×‡fÇVS¢7G"’Óâ–çC ¢'G2ÒfÇVRç&WÆ6R‚"Â"Â"â"’ç7Æ—B‚#¢"¢–bÆVâ‡'G2’Ò3 ¢&—6RfÇVTW'&÷"‡fÇVR¢†÷W'2ÂÖ–çWFW2Ò–çB‡'G5³Ò’Â–çB‡'G5³Ò¢6V6öæG2ÒfÆöB‡'G5³%Ò¢&WGW&â&÷VæB‚††÷W'2¢3c²Ö–çWFW2¢c²6V6öæG2’¢  ¦FVb÷'6UövÆ÷76'’‡fÇVS¢7G"’ÓâÆ—7E·GWÆU·7G"Â7G%ÕÓ ¢&W7VÇBÒµÐ¢f÷"Æ–æR–âfÇVRç7Æ—FÆ–æW2‚“ ¢–b#Ò"–âÆ–æS ¢6÷W&6RÂF&vWBÒÆ–æRç7Æ—B‚#Ò"Â¢–b6÷W&6Rç7G&—‚’æBF&vWBç7G&—‚“ ¢&W7VÇBæVæB‚‡6÷W&6Rç7G&—‚’ÂF&vWBç7G&—‚’’¢&WGW&â&W7VÇ@
+        open_action.triggered.connect(self.open_project)
+        media_action = QAction("æ·»åŠ åª’ä½“", self)
+        media_action.triggered.connect(self.add_media)
+        folder_action = QAction("å¯¼å…¥æ–‡ä»¶å¤¹", self)
+        folder_action.triggered.connect(self.add_media_folder)
+        batch_action = QAction("æ‰¹é‡æ“ä½œâ€¦", self)
+        batch_action.triggered.connect(self.show_batch_operations)
+        resume_queue_action = QAction("ç»§ç»­é˜Ÿåˆ—", self)
+        resume_queue_action.triggered.connect(self.resume_media_queue)
+        models_action = QAction("æ¨¡åž‹ç®¡ç†", self)
+        models_action.triggered.connect(self.show_model_manager)
+        gpu_action = QAction("GPU æŽ¨ç†è®¾ç½®", self)
+        gpu_action.triggered.connect(self.show_gpu_settings)
+        transcribe_action = QAction("å¼€å§‹è¯†åˆ«", self)
+        transcribe_action.triggered.connect(self.start_selected_transcription)
+        force_pause_action = QAction("å¼ºåˆ¶æš‚åœ", self)
+        force_pause_action.setToolTip("ç«‹å³åœæ­¢å½“å‰æ¨¡åž‹/API è¯·æ±‚å¹¶æ¸…ç©ºå°šæœªå¼€å§‹çš„é˜Ÿåˆ—")
+        force_pause_action.triggered.connect(self.force_pause_tasks)
+        check_action = QAction("æ£€æŸ¥å­—å¹•", self)
+        check_action.triggered.connect(self.check_quality)
+        self.problems_action = QAction("ä»…çœ‹é—®é¢˜å­—å¹•", self)
+        self.problems_action.setCheckable(True)
+        self.problems_action.toggled.connect(self._filter_problem_rows)
+        replace_action = QAction("æœç´¢æ›¿æ¢", self)
+        replace_action.setShortcut(QKeySequence.StandardKey.Find)
+        replace_action.triggered.connect(self.search_replace)
+        translate_action = QAction("ç¿»è¯‘æœªå®Œæˆå­—å¹•", self)
+        translate_action.triggered.connect(lambda: self.translate_pending())
+        translation_settings_action = QAction("ç¿»è¯‘æœåŠ¡è®¾ç½®", self)
+        translation_settings_action.triggered.connect(self.show_translation_settings)
+        export_action = QAction("å¯¼å‡ºå­—å¹•", self)
+        export_action.setShortcut(QKeySequence.StandardKey.SaveAs)
+        export_action.triggered.connect(self.export_dialog)
+        open_subtitles_action = QAction("æ‰“å¼€å­—å¹•æ–‡ä»¶å¤¹", self)
+        open_subtitles_action.triggered.connect(self.open_subtitle_folder)
+        about_action = QAction("å…³äºŽ", self)
+        about_action.triggered.connect(self.show_about)
+        for action in (
+            media_action,
+            folder_action,
+            batch_action,
+            transcribe_action,
+            force_pause_action,
+            export_action,
+        ):
+            self.toolbar.addAction(action)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.translation_toggle)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.workflow_label)
+        project_menu = self.menuBar().addMenu("é¡¹ç›®")
+        project_menu.addActions((new_action, open_action))
+        project_menu.addSeparator()
+        project_menu.addActions(
+            (media_action, folder_action, export_action, open_subtitles_action)
+        )
+
+        process_menu = self.menuBar().addMenu("å¤„ç†")
+        process_menu.addActions(
+            (
+                batch_action,
+                resume_queue_action,
+                transcribe_action,
+                translate_action,
+                force_pause_action,
+            )
+        )
+        process_menu.addSeparator()
+        process_menu.addActions((check_action, self.problems_action, replace_action))
+
+        settings_menu = self.menuBar().addMenu("è®¾ç½®")
+        settings_menu.addActions((models_action, gpu_action, translation_settings_action))
+
+        window_menu = self.menuBar().addMenu("çª—å£")
+        task_dock_action = self.task_dock.toggleViewAction()
+        task_dock_action.setText("ä»»åŠ¡é˜Ÿåˆ—")
+        context_dock_action = self.side_dock.toggleViewAction()
+        context_dock_action.setText("ç¿»è¯‘ä¸Šä¸‹æ–‡")
+        window_menu.addActions((task_dock_action, context_dock_action))
+        window_menu.addSeparator()
+        reset_layout_action = QAction("æ¢å¤é»˜è®¤å¸ƒå±€", self)
+        reset_layout_action.triggered.connect(self.reset_window_layout)
+        window_menu.addAction(reset_layout_action)
+
+        help_menu = self.menuBar().addMenu("å¸®åŠ©")
+        help_menu.addAction(about_action)
+
+    def reset_window_layout(self) -> None:
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.task_dock)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.side_dock)
+        self.task_dock.show()
+        self.side_dock.show()
+
+    def start_selected_transcription(self) -> None:
+        item = self.task_tree.currentItem()
+        value = item.data(0, TASK_PATH_ROLE) if item else None
+        if value:
+            self._queue_operations([Path(str(value)).resolve()], "transcribe")
+            return
+        self.transcribe_media(automatic=False)
+
+    def _set_project(self, project: Project | None) -> None:
+        if self.project and self.project is not project:
+            self._save_side_context()
+            self.project.close()
+        self.project = project
+        self.table_model.set_project(project)
+        self.translation_toggle.blockSignals(True)
+        self.translation_toggle.setChecked(
+            self.global_settings.last_translation_enabled
+            if project is None
+            else project.get_settings().translation_enabled
+        )
+        self.translation_toggle.blockSignals(False)
+        self._update_workflow_label()
+        if project:
+            self.prompt_edit.setPlainText(project.active_prompt())
+            self.glossary_edit.setPlainText(
+                "\n".join(f"{source}={target}" for source, target in project.glossary())
+            )
+            self.setWindowTitle(f"{APP_NAME} {__version__} â€” {project.path.name}")
+            media = project.resolve_media()
+            if media:
+                self.player.load(media)
+        else:
+            self.prompt_edit.clear()
+            self.glossary_edit.clear()
+            self.setWindowTitle(f"{APP_NAME} {__version__}")
+
+    def new_project(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "æ–°å»ºé¡¹ç›®", "", "å­—å¹•é¡¹ç›® (*.vstproj)")
+        if not path:
+            return
+        settings = ProjectSettings(
+            translation_enabled=self.global_settings.last_translation_enabled
+        )
+        try:
+            self._set_project(Project.create(path, settings))
+        except Exception as exc:
+            QMessageBox.critical(self, "æ— æ³•æ–°å»ºé¡¹ç›®", str(exc))
+
+    def open_project(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "æ‰“å¼€é¡¹ç›®", "", "å­—å¹•é¡¹ç›® (*.vstproj)")
+        if path:
+            self._open_project_path(Path(path))
+
+    def _open_project_path(self, path: Path) -> None:
+        try:
+            self._set_project(Project.open(path))
+            self.global_settings.last_project = str(path)
+            self.settings_store.save(self.global_settings)
+        except Exception as exc:
+            QMessageBox.critical(self, "æ— æ³•æ‰“å¼€é¡¹ç›®", str(exc))
+
+    def add_media(self) -> None:
+        filters = (
+            "éŸ³è§†é¢‘æ–‡ä»¶ (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus "
+            "*.mp4 *.mkv *.mov *.avi *.webm);;æ‰€æœ‰æ–‡ä»¶ (*)"
+        )
+        path, _ = QFileDialog.getOpenFileName(self, "é€‰æ‹©è¦è½¬æ–‡å­—çš„éŸ³è§†é¢‘", "", filters)
+        if path:
+            media = Path(path).resolve()
+            self._enqueue_media_files([media], media.parent)
+
+    def add_media_folder(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "é€‰æ‹©åŒ…å«éŸ³è§†é¢‘çš„æ–‡ä»¶å¤¹")
+        if not selected:
+            return
+        root = Path(selected).resolve()
+        media_files = sorted(
+            (
+                path.resolve()
+                for path in root.rglob("*")
+                if path.is_file() and path.suffix.lower() in MEDIA_SUFFIXES
+            ),
+            key=lambda path: str(path).casefold(),
+        )
+        if not media_files:
+            QMessageBox.information(self, "æ²¡æœ‰åª’ä½“", "è¯¥æ–‡ä»¶å¤¹åŠå…¶å­æ–‡ä»¶å¤¹ä¸­æ²¡æœ‰æ”¯æŒçš„éŸ³è§†é¢‘ã€‚")
+            return
+        self._enqueue_media_files(media_files, root)
+
+    def _enqueue_media_files(self, media_files: list[Path], root: Path) -> None:
+        root = root.resolve()
+        group = self.task_groups.get(root)
+        if group is None:
+            group = QTreeWidgetItem([f"ðŸ“ {root.name or root}"])
+            group.setToolTip(0, str(root))
+            group.setFlags(
+                group.flags()
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsAutoTristate
+            )
+            self.task_tree.addTopLevelItem(group)
+            self.task_groups[root] = group
+        added = 0
+        for media in media_files:
+            media = media.resolve()
+            if media.suffix.lower() not in MEDIA_SUFFIXES or not media.is_file():
+                continue
+            item = self.task_items.get(media)
+            if item is None:
+                try:
+                    label = str(media.relative_to(root))
+                except ValueError:
+                    label = media.name
+                item = QTreeWidgetItem([label])
+                item.setData(0, TASK_PATH_ROLE, str(media))
+                item.setToolTip(0, str(media))
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.CheckState.Checked)
+                group.addChild(item)
+                self.task_items[media] = item
+                self.task_progress[media] = 0
+                self._set_media_status(media, "ç­‰å¾…é€‰æ‹©æ“ä½œ", progress=0)
+                added += 1
+        group.setText(0, f"ðŸ“ {root.name or root}ï¼ˆ{group.childCount()} ä¸ªæ–‡ä»¶ï¼‰")
+        group.setExpanded(True)
+        if added:
+            self.statusBar().showMessage(
+                f"å·²åŠ å…¥ {added} ä¸ªåª’ä½“æ–‡ä»¶ï¼›ä¸ä¼šè‡ªåŠ¨è¯†åˆ«ï¼Œè¯·æ‰‹åŠ¨å¼€å§‹",
+                8000,
+            )
+
+    def _start_next_queued_media(self) -> None:
+        if self.current_media_path is not None:
+            return
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            return
+        if self.translation_thread and self.translation_thread.isRunning():
+            return
+        while self.pending_media:
+            media = self.pending_media.popleft()
+            self.current_action = self.pending_actions.pop(media, "auto")
+            if not media.is_file():
+                self.queued_media.discard(media)
+                self._set_media_status(media, "æ–‡ä»¶ä¸å­˜åœ¨")
+                continue
+            self.current_media_path = media
+            self._set_media_status(media, "æ­£åœ¨å¯¼å…¥", progress=3)
+            self._ingest_media(media)
+            return
+        self.statusBar().showMessage("ä»»åŠ¡é˜Ÿåˆ—å·²å®Œæˆ", 5000)
+
+    def resume_media_queue(self) -> None:
+        if self.current_media_path and not (
+            self.transcription_thread and self.transcription_thread.isRunning()
+        ):
+            if self.current_action == "translate":
+                self.translate_pending()
+            elif self.current_action == "transcribe":
+                self.transcribe_media(automatic=True)
+            elif (
+                self.project
+                and self.project.get_settings().translation_enabled
+                and self.project.list_segments()
+            ):
+                self.translate_pending()
+            else:
+                self.transcribe_media(automatic=True)
+            return
+        self._start_next_queued_media()
+
+    def _set_media_status(
+        self,
+        media: Path,
+        status: str,
+        *,
+        progress: int | None = None,
+        show_progress: bool | None = None,
+    ) -> None:
+        media = media.resolve()
+        self.task_status[media] = status
+        if progress is not None:
+            self.task_progress[media] = max(0, min(progress, 100))
+        if show_progress is None:
+            show_progress = progress is not None and 0 < progress < 100
+        if item := self.task_items.get(media):
+            icon = (
+                self._progress_icon(self.task_progress.get(media, 0))
+                if show_progress
+                else QIcon()
+            )
+            item.setIcon(0, icon)
+        if self.detail_media_path == media:
+            self._refresh_task_details(media)
+
+    @staticmethod
+    def _progress_icon(value: int) -> QIcon:
+        width, height = 40, 8
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setPen(QColor("#8fa4b8"))
+        painter.setBrush(QColor("#e4ebf1"))
+        painter.drawRoundedRect(0, 0, width - 1, height - 1, 3, 3)
+        fill_width = max(2, round((width - 2) * max(0, min(value, 100)) / 100))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#1683df"))
+        painter.drawRoundedRect(1, 1, fill_width, height - 2, 2, 2)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _finish_current_media(self, status: str) -> None:
+        media = self.current_media_path
+        if media is None:
+            return
+        completed = any(marker in status for marker in ("å·²å®Œæˆ", "è¯†åˆ«å®Œæˆ", "ç¿»è¯‘å®Œæˆ"))
+        self._set_media_status(
+            media,
+            status,
+            progress=100 if completed else None,
+            show_progress=False,
+        )
+        self.queued_media.discard(media)
+        self.current_media_path = None
+        self.current_action = "auto"
+        QTimer.singleShot(0, self._start_next_queued_media)
+
+    def _open_task_media(self, item: QTreeWidgetItem, _column: int) -> None:
+        value = item.data(0, TASK_PATH_ROLE)
+        if not value:
+            item.setExpanded(not item.isExpanded())
+            return
+        media = Path(str(value)).resolve()
+        self._show_task_details(media)
+        if (self.transcription_thread and self.transcription_thread.isRunning()) or (
+            self.translation_thread and self.translation_thread.isRunning()
+        ):
+            return
+        self._load_media_project(media)
+
+    def _show_task_context_menu(self, position) -> None:
+        item = self.task_tree.itemAt(position)
+        if item is None:
+            return
+        value = item.data(0, TASK_PATH_ROLE)
+        if not value:
+            return
+        media = Path(str(value)).resolve()
+        menu = QMenu(self)
+        transcribe = menu.addAction("è½¬æ–‡å­— / é‡æ–°è¯†åˆ«")
+        translate = menu.addAction("ç¿»è¯‘å·²æœ‰å­—å¹•")
+        menu.addSeparator()
+        details = menu.addAction("æŸ¥çœ‹ä»»åŠ¡è¯¦æƒ…")
+        sovits = menu.addAction("SoVITS æ”¹é…éŸ³ï¼ˆæš‚æœªå®žçŽ°ï¼‰")
+        sovits.setEnabled(False)
+        selected = menu.exec(self.task_tree.viewport().mapToGlobal(position))
+        if selected == transcribe:
+            self._queue_operations([media], "transcribe")
+        elif selected == translate:
+            self._queue_operations([media], "translate")
+        elif selected == details:
+            self._show_task_details(media)
+            if not self._task_is_running():
+                self._load_media_project(media)
+
+    def show_batch_operations(self) -> None:
+        if not self.task_items:
+            QMessageBox.information(self, "æ²¡æœ‰åª’ä½“", "è¯·å…ˆæ·»åŠ éŸ³è§†é¢‘æ–‡ä»¶æˆ–æ–‡ä»¶å¤¹ã€‚")
+            return
+        groups: list[tuple[Path, list[tuple[Path, bool]]]] = []
+        for root, group in self.task_groups.items():
+            media_items: list[tuple[Path, bool]] = []
+            for index in range(group.childCount()):
+                child = group.child(index)
+                value = child.data(0, TASK_PATH_ROLE)
+                if value:
+                    media_items.append(
+                        (
+                            Path(str(value)).resolve(),
+                            child.checkState(0) == Qt.CheckState.Checked,
+                        )
+                    )
+            groups.append((root, media_items))
+        dialog = BatchOperationDialog(groups, parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        selected = set(dialog.selected_paths())
+        for media, item in self.task_items.items():
+            item.setCheckState(
+                0,
+                Qt.CheckState.Checked if media in selected else Qt.CheckState.Unchecked,
+            )
+        ordered = sorted(selected, key=lambda path: str(path).casefold())
+        self._queue_operations(ordered, dialog.selected_operation)
+
+    def _queue_operations(self, media_files: list[Path], operation: str) -> None:
+        if operation == "sovits":
+            QMessageBox.information(self, "æš‚æœªå®žçŽ°", "SoVITS æ”¹é…éŸ³å°†åœ¨åŽç»­ç‰ˆæœ¬æä¾›ã€‚")
+            return
+        added = 0
+        for media in media_files:
+            media = media.resolve()
+            if media not in self.task_items or media in self.queued_media:
+                continue
+            if media == self.current_media_path:
+                continue
+            self.pending_media.append(media)
+            self.pending_actions[media] = operation
+            self.queued_media.add(media)
+            label = "ç­‰å¾…è½¬æ–‡å­—" if operation == "transcribe" else "ç­‰å¾…ç¿»è¯‘"
+            self._set_media_status(media, label, progress=0)
+            added += 1
+        if not added:
+            QMessageBox.information(self, "æ²¡æœ‰åŠ å…¥ä»»åŠ¡", "æ‰€é€‰æ–‡ä»¶å·²åœ¨å¤„ç†é˜Ÿåˆ—ä¸­ã€‚")
+            return
+        self.statusBar().showMessage(f"å·²åŠ å…¥ {added} ä¸ªæ‰¹é‡ä»»åŠ¡", 5000)
+        QTimer.singleShot(0, self._start_next_queued_media)
+
+    def _task_is_running(self) -> bool:
+        return bool(
+            (self.transcription_thread and self.transcription_thread.isRunning())
+            or (self.translation_thread and self.translation_thread.isRunning())
+        )
+
+    def force_pause_tasks(self) -> None:
+        if not self._task_is_running() and not self.pending_media:
+            QMessageBox.information(self, "æ²¡æœ‰è¿è¡Œä¸­çš„ä»»åŠ¡", "å½“å‰æ²¡æœ‰éœ€è¦æš‚åœçš„è¯†åˆ«æˆ–ç¿»è¯‘ä»»åŠ¡ã€‚")
+            return
+        self._request_force_pause(wait=False)
+        self.statusBar().showMessage("æ­£åœ¨å¼ºåˆ¶æš‚åœå¹¶é‡Šæ”¾æ¨¡åž‹/API è¯·æ±‚â€¦â€¦")
+        QTimer.singleShot(2500, self._finish_force_pause)
+
+    def _request_force_pause(self, *, wait: bool) -> None:
+        for media in tuple(self.pending_media):
+            self._set_media_status(media, "å·²å–æ¶ˆæŽ’é˜Ÿ", show_progress=False)
+            self.queued_media.discard(media)
+        self.pending_media.clear()
+        self.pending_actions.clear()
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            self.transcription_thread.force_stop()
+        if self.translation_thread and self.translation_thread.isRunning():
+            self.translation_thread.force_stop()
+        if wait:
+            for thread in (self.transcription_thread, self.translation_thread):
+                if thread and thread.isRunning() and not thread.wait(2000):
+                    thread.terminate()
+                    thread.wait(500)
+
+    def _finish_force_pause(self) -> None:
+        for thread in (self.transcription_thread, self.translation_thread):
+            if thread and thread.isRunning():
+                thread.terminate()
+                thread.wait(300)
+        if self.current_media_path:
+            self._finish_current_media("å·²å¼ºåˆ¶æš‚åœ")
+        self.statusBar().showMessage("ä»»åŠ¡å·²å¼ºåˆ¶æš‚åœï¼›å·²ä¿å­˜çš„è¯†åˆ«/ç¿»è¯‘æ‰¹æ¬¡ä¸ä¼šä¸¢å¤±", 8000)
+
+    def _show_task_details(self, media: Path) -> None:
+        self.detail_media_path = media.resolve()
+        self.task_detail.setVisible(True)
+        self._refresh_task_details(self.detail_media_path)
+
+    def _refresh_task_details(self, media: Path) -> None:
+        media = media.resolve()
+        self.detail_path_label.setText(f"æ–‡ä»¶ï¼š{media}")
+        status = self.task_status.get(media, "æœªåŠ å…¥ä»»åŠ¡é˜Ÿåˆ—")
+        self.detail_status_label.setText(f"å½“å‰é˜¶æ®µï¼š{status}")
+        self.detail_progress.setRange(0, 100)
+        self.detail_progress.setValue(self.task_progress.get(media, 0))
+        self.detail_progress.setFormat("%p%")
+
+    def _ingest_media(self, media_path: Path) -> None:
+        media_path = media_path.resolve()
+        if media_path.suffix.lower() not in MEDIA_SUFFIXES:
+            QMessageBox.information(
+                self,
+                "ä¸æ”¯æŒçš„æ–‡ä»¶",
+                "è¯·æ‹–å…¥ MP3ã€WAVã€M4Aã€FLACã€MP4ã€MKVã€MOV æˆ– WebM ç­‰éŸ³è§†é¢‘æ–‡ä»¶ã€‚",
+            )
+            self._finish_current_media("ä¸æ”¯æŒçš„æ ¼å¼")
+            return
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            QMessageBox.information(self, "è¯†åˆ«æ­£åœ¨è¿è¡Œ", "è¯·ç­‰å¾…å½“å‰åª’ä½“è¯†åˆ«å®Œæˆã€‚")
+            return
+        if self.translation_thread and self.translation_thread.isRunning():
+            QMessageBox.information(self, "ç¿»è¯‘æ­£åœ¨è¿è¡Œ", "è¯·ç­‰å¾…å½“å‰åª’ä½“ç¿»è¯‘å®Œæˆã€‚")
+            return
+        if not self._load_media_project(media_path):
+            self._finish_current_media("å¯¼å…¥å¤±è´¥")
+            return
+        existing = self.project.list_segments()
+        if self.current_action == "transcribe":
+            self._set_media_status(media_path, "ç­‰å¾…è½¬æ–‡å­—", progress=0)
+            QTimer.singleShot(0, lambda: self.transcribe_media(automatic=True))
+            return
+        if self.current_action == "translate":
+            if not existing:
+                self._finish_current_media("æ— æ³•ç¿»è¯‘ Â· å°šæ— åŽŸæ–‡å­—å¹•")
+                return
+            settings = self.project.get_settings()
+            settings.translation_enabled = True
+            self.project.save_settings(settings)
+            self.translation_toggle.blockSignals(True)
+            self.translation_toggle.setChecked(True)
+            self.translation_toggle.blockSignals(False)
+            self._update_workflow_label()
+            self._set_media_status(media_path, "ç­‰å¾…ç¿»è¯‘", progress=0)
+            QTimer.singleShot(0, self.translate_pending)
+            return
+        if existing:
+            self._set_media_status(media_path, f"å·²æ¢å¤ {len(existing)} æ¡å­—å¹•")
+            self.statusBar().showMessage(
+                f"å·²æ¢å¤è¯¥åª’ä½“çš„ {len(existing)} æ¡å­—å¹•ï¼›å¯ç»§ç»­æ ¡å¯¹æˆ–é‡æ–°è¯†åˆ«", 8000
+            )
+            if self.translation_toggle.isChecked() and any(
+                not segment.has_valid_translation for segment in existing
+            ):
+                self._set_media_status(media_path, "ç­‰å¾…ç¿»è¯‘")
+                QTimer.singleShot(0, self.translate_pending)
+            else:
+                self._finish_current_media("å·²å®Œæˆ")
+        else:
+            self._set_media_status(media_path, "ç­‰å¾…è¯†åˆ«", progress=0)
+            QTimer.singleShot(0, lambda: self.transcribe_media(automatic=True))
+
+    def _load_media_project(self, media_path: Path) -> bool:
+        media_path = media_path.resolve()
+        if not media_path.is_file() or media_path.suffix.lower() not in MEDIA_SUFFIXES:
+            QMessageBox.information(self, "åª’ä½“ä¸å¯ç”¨", f"æ‰¾ä¸åˆ°æˆ–ä¸æ”¯æŒè¯¥æ–‡ä»¶ï¼š\n{media_path}")
+            return False
+        try:
+            fingerprint = quick_file_fingerprint(media_path)
+            safe_stem = re.sub(r"[^\w\-]+", "_", media_path.stem, flags=re.UNICODE).strip("_")
+            safe_stem = safe_stem[:60] or "media"
+            projects_dir = self.paths.data / "projects"
+            projects_dir.mkdir(parents=True, exist_ok=True)
+            project_path = projects_dir / f"{safe_stem}-{fingerprint[:12]}.vstproj"
+            if project_path.exists():
+                project = Project.open(project_path)
+            else:
+                project = Project.create(
+                    project_path,
+                    ProjectSettings(
+                        translation_enabled=self.global_settings.last_translation_enabled
+                    ),
+                )
+            project.set_media(media_path)
+            self._set_project(project)
+            self.global_settings.last_project = str(project_path)
+            self.settings_store.save(self.global_settings)
+            self.player.load(media_path)
+            self._show_task_details(media_path)
+            return True
+        except Exception as exc:
+            QMessageBox.critical(self, "æ— æ³•å¯¼å…¥åª’ä½“", str(exc))
+            return False
+
+    def show_model_manager(self) -> None:
+        offline = self.project.get_settings().offline if self.project else False
+        dialog = ModelManagerDialog(
+            ModelManager(self.paths, bundled_resource("models/manifest.json")),
+            offline=offline,
+            parent=self,
+        )
+        dialog.exec()
+
+    def show_gpu_settings(self) -> bool:
+        offline = self.project.get_settings().offline if self.project else False
+        dialog = GPUSettingsDialog(
+            GPURuntimeManager(self.paths),
+            profile_id=self.global_settings.asr_profile,
+            offline=offline,
+            parent=self,
+        )
+        if not dialog.exec():
+            return False
+        profile = selected_profile(dialog.selected_profile_id)
+        self.global_settings.asr_profile = profile.id
+        self.global_settings.asr_device = profile.device
+        self.global_settings.asr_compute_type = profile.compute_type
+        self.settings_store.save(self.global_settings)
+        self.statusBar().showMessage(f"å·²é€‰æ‹© GPU æŽ¨ç†æ¡£ä½ï¼š{profile.name}", 6000)
+        return True
+
+    def transcribe_media(self, *, automatic: bool = False) -> None:
+        if not self._require_project():
+            return
+        project_media = self.project.resolve_media()
+        if project_media is None:
+            QMessageBox.information(self, "æ²¡æœ‰åª’ä½“", "è¯·å…ˆæ·»åŠ æˆ–é‡æ–°å®šä½éŸ³è§†é¢‘æ–‡ä»¶ã€‚")
+            return
+        if self.current_media_path is None and project_media.resolve() in self.task_items:
+            self.current_media_path = project_media.resolve()
+            self.current_action = "auto"
+            self.queued_media.add(self.current_media_path)
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            QMessageBox.information(self, "è¯†åˆ«æ­£åœ¨è¿è¡Œ", "è¯·ç­‰å¾…å½“å‰è¯†åˆ«ä»»åŠ¡å®Œæˆã€‚")
+            return
+        manager = ModelManager(self.paths, bundled_resource("models/manifest.json"))
+        installed = [
+            model.descriptor.id
+            for model in manager.models.values()
+            if model.descriptor.id != "silero-vad-v6" and manager.is_installed(model.descriptor.id)
+        ]
+        if not manager.is_installed("silero-vad-v6") or not installed:
+            QMessageBox.information(
+                self,
+                "æ¨¡åž‹å°šæœªå®‰è£…",
+                "é¦–æ¬¡è½¬æ¢éœ€è¦ Silero VAD å’Œè‡³å°‘ä¸€ä¸ªè¯­éŸ³è¯†åˆ«æ¨¡åž‹ã€‚"
+                "è¯·åœ¨æ¨¡åž‹ç®¡ç†å™¨ä¸­ä¸‹è½½åŽå…³é—­çª—å£ï¼Œç¨‹åºä¼šç»§ç»­æ£€æŸ¥ã€‚",
+            )
+            self.show_model_manager()
+            manager = ModelManager(self.paths, bundled_resource("models/manifest.json"))
+            installed = [
+                model.descriptor.id
+                for model in manager.models.values()
+                if model.descriptor.id != "silero-vad-v6"
+                and manager.is_installed(model.descriptor.id)
+            ]
+            if not manager.is_installed("silero-vad-v6") or not installed:
+                self.statusBar().showMessage("å°šæœªå®‰è£…å®Œæ•´è¯†åˆ«æ¨¡åž‹ï¼Œåª’ä½“é¡¹ç›®å·²ä¿å­˜", 8000)
+                if self.current_media_path:
+                    self._set_media_status(self.current_media_path, "ç­‰å¾…å®‰è£…æ¨¡åž‹")
+                return
+        settings = self.project.get_settings()
+        if automatic:
+            model_id = settings.asr_model if settings.asr_model in installed else installed[0]
+        else:
+            model_id, ok = QInputDialog.getItem(
+                self, "é€‰æ‹©è¯†åˆ«æ¨¡åž‹", "æ¨¡åž‹ï¼š", installed, editable=False
+            )
+            if not ok:
+                return
+            if not self.show_gpu_settings():
+                return
+        profile = selected_profile(self.global_settings.asr_profile)
+        device = profile.device
+        compute_type = profile.compute_type
+        if device == "cuda" and not GPURuntimeManager(self.paths).is_installed():
+            QMessageBox.information(
+                self,
+                "GPU è¿è¡Œåº“æœªå®‰è£…",
+                "å½“å‰æ¡£ä½éœ€è¦ CUDA 12.xã€cuBLAS å’Œ cuDNN 9ã€‚\n"
+                "è¯·åœ¨â€œGPU æŽ¨ç†è®¾ç½®â€ä¸­ä¸‹è½½ç»¿è‰²è¿è¡Œåº“ï¼›"
+                "ç¨‹åºä¸ä¼šè‡ªåŠ¨æ”¹ç”¨ CPUã€‚",
+            )
+            if not self.show_gpu_settings():
+                return
+            profile = selected_profile(self.global_settings.asr_profile)
+            device = profile.device
+            compute_type = profile.compute_type
+            if device == "cuda" and not GPURuntimeManager(self.paths).is_installed():
+                if self.current_media_path:
+                    self._set_media_status(self.current_media_path, "ç­‰å¾…å®‰è£… GPU è¿è¡Œåº“")
+                return
+        settings.asr_model = model_id
+        self.project.save_settings(settings)
+        thread = TranscriptionThread(
+            project_path=self.project.path,
+            paths=self.paths,
+            model_id=model_id,
+            device=device,
+            compute_type=compute_type,
+            parent=self,
+        )
+        if self.current_media_path:
+            self._set_media_status(
+                self.current_media_path,
+                f"è¯†åˆ«ä¸­ Â· {model_id} / {device} / {compute_type}",
+                progress=1,
+            )
+        self.statusBar().showMessage("æ­£åœ¨æ‰§è¡ŒéŸ³é¢‘æ ‡å‡†åŒ–ã€VAD å’Œè¯†åˆ«â€¦â€¦")
+        thread.succeeded.connect(self._transcription_succeeded)
+        thread.failed.connect(self._transcription_failed)
+        thread.cancelled.connect(self._task_cancelled)
+        thread.progress.connect(self._transcription_progress)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: setattr(self, "transcription_thread", None))
+        self.transcription_thread = thread
+        thread.start()
+
+    def _transcription_progress(self, stage: str, completed: int, total: int) -> None:
+        if not self.current_media_path:
+            return
+        percent = round(completed / max(total, 1) * 100)
+        self._set_media_status(self.current_media_path, stage, progress=percent)
+        self.statusBar().showMessage(stage)
+
+    def _transcription_succeeded(self, task_id: str, segment_count: int) -> None:
+        if self.project:
+            self.table_model.refresh()
+            self._filter_problem_rows(self.problems_action.isChecked())
+        self.statusBar().showMessage(
+            f"è¯†åˆ«å®Œæˆï¼šå…± {segment_count} æ¡å­—å¹•ï¼ˆä»»åŠ¡ {task_id[:8]}ï¼‰ã€‚"
+            "è¯·ç‚¹å‡»â€œå¯¼å‡ºå­—å¹•â€é€‰æ‹© SRT è¾“å‡ºä½ç½®ã€‚",
+            10000,
+        )
+        should_translate = self.current_action == "auto" and self.translation_toggle.isChecked()
+        if segment_count and should_translate:
+            if self.current_media_path:
+                self._set_media_status(self.current_media_path, "ç­‰å¾…ç¿»è¯‘", progress=0)
+            QTimer.singleShot(0, self.translate_pending)
+        elif segment_count:
+            self._finish_current_media(f"è¯†åˆ«å®Œæˆ Â· {segment_count} æ¡")
+        else:
+            self._finish_current_media("æœªæ£€æµ‹åˆ°è¯­éŸ³")
+
+    def _transcription_failed(self, message: str) -> None:
+        if any(
+            marker in message.lower()
+            for marker in ("cublas64_12.dll", "cudnn", "cuda driver", "cuda_error")
+        ):
+            message = (
+                "GPU è¿è¡Œåº“æœªå®‰è£…å®Œæ•´æˆ–ä¸Žå½“å‰æ˜¾å¡ä¸å…¼å®¹ã€‚\n\n"
+                f"åŽŸå§‹é”™è¯¯ï¼š{message}\n\n"
+                "è¯·æ‰“å¼€â€œGPU æŽ¨ç†è®¾ç½®â€ï¼Œä¸º RTX 50 ç³»é€‰æ‹©æŽ¨èæ¡£ä½å¹¶"
+                "å®‰è£… CUDA 12.9 ç»¿è‰²è¿è¡Œåº“ã€‚ç¨‹åºä¸ä¼šè‡ªåŠ¨åˆ‡æ¢åˆ° CPUã€‚"
+            )
+        QMessageBox.critical(self, "è¯†åˆ«å¤±è´¥", message)
+        self._finish_current_media("è¯†åˆ«å¤±è´¥")
+        if self.project:
+            self.table_model.refresh()
+
+    def _task_cancelled(self) -> None:
+        if self.project:
+            self.table_model.refresh()
+        self._finish_current_media("å·²å¼ºåˆ¶æš‚åœ")
+        self.statusBar().showMessage("ä»»åŠ¡å·²å¼ºåˆ¶æš‚åœï¼›å·²å®Œæˆæ‰¹æ¬¡å·²ç»ä¿å­˜", 8000)
+
+    def _translation_toggled(self, checked: bool) -> None:
+        self.global_settings.last_translation_enabled = checked
+        self.settings_store.save(self.global_settings)
+        if self.project:
+            PipelineCoordinator(self.project).set_translation_enabled(checked)
+        self._update_workflow_label()
+        if (
+            checked
+            and self.project
+            and self.project.list_segments()
+            and not (self.transcription_thread and self.transcription_thread.isRunning())
+        ):
+            QTimer.singleShot(0, self.translate_pending)
+
+    def _update_workflow_label(self) -> None:
+        if self.translation_toggle.isChecked():
+            self.workflow_label.setText("å½“å‰ï¼šè¯†åˆ«åŽç¿»è¯‘ä¸ºç®€ä½“ä¸­æ–‡")
+        else:
+            self.workflow_label.setText("å½“å‰ï¼šä»…è¯†åˆ«å¹¶å¯¼å‡ºåŽŸæ–‡å­—å¹•")
+
+    def check_quality(self) -> None:
+        if not self._require_project():
+            return
+        segments = self.project.list_segments()
+        apply_quality_flags(segments, self.project.get_settings().subtitle)
+        with self.project.connection:
+            for segment in segments:
+                import json
+
+                self.project.connection.execute(
+                    "UPDATE segments SET quality_flags_json=? WHERE id=?",
+                    (json.dumps(sorted(segment.quality_flags), ensure_ascii=False), segment.id),
+                )
+        self.table_model.refresh()
+        self._filter_problem_rows(self.problems_action.isChecked())
+        problem_count = sum(bool(item.quality_flags) for item in segments)
+        self.statusBar().showMessage(f"æ£€æŸ¥å®Œæˆï¼š{problem_count} æ¡å­—å¹•éœ€è¦æ³¨æ„", 5000)
+
+    def show_translation_settings(self) -> bool:
+        provider = self.global_settings.translation_provider or "openai"
+        credential_store = CredentialStore()
+        has_saved_key = bool(credential_store.get(provider))
+        dialog = TranslationSettingsDialog(
+            provider=provider,
+            base_url=self.global_settings.translation_base_url,
+            model=self.global_settings.translation_model,
+            has_saved_key=has_saved_key,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        values = dialog.values()
+        if not values.base_url or not values.model:
+            QMessageBox.information(self, "é…ç½®ä¸å®Œæ•´", "è¯·å¡«å†™ Base URL å’Œæ¨¡åž‹åç§°ã€‚")
+            return False
+        is_local = values.base_url.startswith(("http://127.0.0.1", "http://localhost"))
+        if values.api_key:
+            credential_store.set(values.provider, values.api_key)
+        elif not is_local and not credential_store.get(values.provider):
+            QMessageBox.information(self, "ç¼ºå°‘ API Key", "è¿œç¨‹ç¿»è¯‘æœåŠ¡éœ€è¦ API Keyã€‚")
+            return False
+        self.global_settings.translation_provider = values.provider
+        self.global_settings.translation_base_url = values.base_url
+        self.global_settings.translation_model = values.model
+        self.global_settings.translation_structured_output = values.structured_output
+        self.settings_store.save(self.global_settings)
+        if self.project:
+            settings = self.project.get_settings()
+            settings.translation_provider = values.provider
+            settings.translation_model = values.model
+            self.project.save_settings(settings)
+        self.statusBar().showMessage(f"å·²ä¿å­˜ç¿»è¯‘æœåŠ¡ï¼š{values.provider} / {values.model}", 6000)
+        return True
+
+    def translate_pending(self) -> None:
+        if not self._require_project():
+            return
+        if not self.project.get_settings().translation_enabled:
+            QMessageBox.information(self, "æœªå¯ç”¨ç¿»è¯‘", "è¯·å…ˆå¼€å¯é¡¶éƒ¨â€œå¯ç”¨ç¿»è¯‘â€å¼€å…³ã€‚")
+            return
+        if self.translation_thread and self.translation_thread.isRunning():
+            QMessageBox.information(self, "ç¿»è¯‘æ­£åœ¨è¿è¡Œ", "è¯·ç­‰å¾…å½“å‰ç¿»è¯‘æ‰¹æ¬¡å®Œæˆã€‚")
+            return
+        if (
+            not self.global_settings.translation_base_url
+            or not self.global_settings.translation_model
+        ) and not self.show_translation_settings():
+            self.statusBar().showMessage("è¯†åˆ«å·²å®Œæˆï¼›å°šæœªé…ç½®ç¿»è¯‘æœåŠ¡", 8000)
+            if self.current_media_path:
+                self._finish_current_media("ç­‰å¾…é…ç½®ç¿»è¯‘æœåŠ¡")
+            return
+        settings = self.project.get_settings()
+        provider_id = self.global_settings.translation_provider or "openai-compatible"
+        base_url = self.global_settings.translation_base_url
+        model = self.global_settings.translation_model
+        is_local = base_url.startswith(("http://127.0.0.1", "http://localhost"))
+        key = "" if is_local else (CredentialStore().get(provider_id) or "")
+        if not is_local and not key:
+            if not self.show_translation_settings():
+                if self.current_media_path:
+                    self._finish_current_media("ç­‰å¾…é…ç½®ç¿»è¯‘æœåŠ¡")
+                return
+            provider_id = self.global_settings.translation_provider
+            base_url = self.global_settings.translation_base_url
+            model = self.global_settings.translation_model
+            is_local = base_url.startswith(("http://127.0.0.1", "http://localhost"))
+            key = "" if is_local else (CredentialStore().get(provider_id) or "")
+            if not is_local and not key:
+                return
+        settings.translation_provider = provider_id
+        settings.translation_model = model
+        self.project.save_settings(settings)
+        self._save_side_context()
+        thread = TranslationThread(
+            project_path=self.project.path,
+            config=ProviderConfig(
+                id=provider_id,
+                base_url=base_url,
+                api_key=key,
+                structured_output=self.global_settings.translation_structured_output,
+                offline=settings.offline,
+            ),
+            prompt=self.prompt_edit.toPlainText(),
+            glossary=_parse_glossary(self.glossary_edit.toPlainText()),
+            parent=self,
+        )
+        if self.current_media_path:
+            self._set_media_status(
+                self.current_media_path,
+                f"ç¿»è¯‘ä¸­ Â· {provider_id} / {model}",
+                progress=0,
+                show_progress=True,
+            )
+        thread.progress.connect(self._translation_progress)
+        thread.progress.connect(
+            lambda done, total: self.statusBar().showMessage(f"ç¿»è¯‘æ‰¹æ¬¡ {done}/{total}")
+        )
+        thread.succeeded.connect(self._translation_succeeded)
+        thread.failed.connect(self._translation_failed)
+        thread.cancelled.connect(self._task_cancelled)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: setattr(self, "translation_thread", None))
+        self.translation_thread = thread
+        thread.start()
+
+    def _translation_progress(self, completed: int, total: int) -> None:
+        if not self.current_media_path:
+            return
+        percent = round(completed / max(total, 1) * 100)
+        self._set_media_status(
+            self.current_media_path,
+            f"æ­£åœ¨ç¿»è¯‘å­—å¹• {completed}/{total}",
+            progress=percent,
+        )
+
+    def _translation_succeeded(self, completed: int, cached: int, stopped: bool) -> None:
+        if self.project:
+            self.table_model.refresh()
+            self._filter_problem_rows(self.problems_action.isChecked())
+        if stopped:
+            self.statusBar().showMessage(
+                f"ç¿»è¯‘å·²æš‚åœï¼šå®Œæˆ {completed} æ¡ï¼Œç¼“å­˜å‘½ä¸­ {cached} æ¡", 7000
+            )
+            self._finish_current_media(f"ç¿»è¯‘å·²æš‚åœ Â· {completed} æ¡")
+        else:
+            self.statusBar().showMessage(f"ç¿»è¯‘å®Œæˆ {completed} æ¡ï¼Œç¼“å­˜å‘½ä¸­ {cached} æ¡", 7000)
+            self._finish_current_media(f"å·²å®Œæˆ Â· ç¿»è¯‘ {completed} æ¡")
+
+    def _translation_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "ç¿»è¯‘å¤±è´¥", message)
+        self._finish_current_media("ç¿»è¯‘å¤±è´¥")
+        if self.project:
+            self.table_model.refresh()
+
+    def search_replace(self) -> None:
+        if not self._require_project():
+            return
+        source, ok = QInputDialog.getText(self, "æœç´¢æ›¿æ¢", "æŸ¥æ‰¾åŽŸæ–‡ï¼š")
+        if not ok or not source:
+            return
+        replacement, ok = QInputDialog.getText(self, "æœç´¢æ›¿æ¢", "æ›¿æ¢ä¸ºï¼š")
+        if not ok:
+            return
+        changed = 0
+        for segment in self.project.list_segments():
+            if source in segment.source_text:
+                self.project.update_source_text(
+                    segment.id, segment.source_text.replace(source, replacement), lock=True
+                )
+                changed += 1
+        self.table_model.refresh()
+        self._filter_problem_rows(self.problems_action.isChecked())
+        self.statusBar().showMessage(f"å·²æ›¿æ¢ {changed} æ¡å­—å¹•", 5000)
+
+    def _filter_problem_rows(self, enabled: bool) -> None:
+        for row, segment in enumerate(self.table_model.segments):
+            self.table.setRowHidden(row, enabled and not bool(segment.quality_flags))
+
+    def export_dialog(self) -> None:
+        if not self._require_project():
+            return
+        media = self.project.resolve_media()
+        if media is None:
+            QMessageBox.information(self, "æ²¡æœ‰åª’ä½“", "é¡¹ç›®æ²¡æœ‰å¯ç”¨åª’ä½“ï¼Œæ— æ³•ç”Ÿæˆå­—å¹•æ–‡ä»¶åã€‚")
+            return
+        choices = ["åŽŸæ–‡"]
+        allowed, reason = can_export(self.project.list_segments(), ExportContent.TRANSLATION)
+        if allowed:
+            choices.extend(["è¯‘æ–‡", "åŒè¯­"])
+        if len(choices) == 1:
+            content_name = "åŽŸæ–‡"
+        else:
+            content_name, ok = QInputDialog.getItem(
+                self, "å¯¼å‡ºå†…å®¹", "å†…å®¹ï¼š", choices, editable=False
+            )
+            if not ok:
+                return
+        content_map = {
+            "åŽŸæ–‡": ExportContent.SOURCE,
+            "è¯‘æ–‡": ExportContent.TRANSLATION,
+            "åŒè¯­": ExportContent.BILINGUAL,
+        }
+        output_directory = self.paths.data / "subtitles" / content_name
+        output_directory.mkdir(parents=True, exist_ok=True)
+        path = output_directory / f"{media.stem}.srt"
+        if path.exists():
+            answer = QMessageBox.question(
+                self,
+                "è¦†ç›–å·²æœ‰å­—å¹•",
+                f"å­—å¹•æ–‡ä»¶å·²ç»å­˜åœ¨ï¼š\n{path}\n\næ˜¯å¦è¦†ç›–ï¼Ÿ",
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            export_subtitles(
+                self.project.list_segments(),
+                path,
+                output_format=ExportFormat.SRT,
+                content=content_map[content_name],
+            )
+            self.statusBar().showMessage(f"å·²å¯¼å‡ºï¼š{path}", 5000)
+            QMessageBox.information(
+                self,
+                "å¯¼å‡ºå®Œæˆ",
+                f"å·²æŒ‰åª’ä½“æ–‡ä»¶åå¯¼å‡ºï¼š\n{path}\n\n"
+                "å¯é€šè¿‡â€œé¡¹ç›® â†’ æ‰“å¼€å­—å¹•æ–‡ä»¶å¤¹â€æŸ¥çœ‹ã€‚",
+            )
+        except TranslationUnavailableError:
+            QMessageBox.information(self, "æ— æ³•å¯¼å‡ºè¯‘æ–‡", reason)
+        except Exception as exc:
+            QMessageBox.critical(self, "å¯¼å‡ºå¤±è´¥", str(exc))
+
+    def open_subtitle_folder(self) -> None:
+        root = self.paths.data / "subtitles"
+        for name in ("åŽŸæ–‡", "è¯‘æ–‡", "åŒè¯­"):
+            (root / name).mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(root.resolve())))
+
+    def _seek_selected(self, index: QModelIndex) -> None:
+        if index.isValid() and index.row() < len(self.table_model.segments):
+            self.player.seek_ms(self.table_model.segments[index.row()].start_ms)
+
+    def _require_project(self) -> bool:
+        if self.project:
+            return True
+        QMessageBox.information(self, "æ²¡æœ‰é¡¹ç›®", "è¯·å…ˆæ–°å»ºæˆ–æ‰“å¼€ .vstproj é¡¹ç›®ã€‚")
+        return False
+
+    def show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            f"å…³äºŽ{APP_NAME}",
+            f"{APP_NAME} {__version__}\n\nä½œè€…ï¼š{AUTHOR}\nBç«™ï¼š{BILIBILI_URL}\n"
+            f"GitHubï¼š{GITHUB_URL}\nå®˜æ–¹ç‰ˆæœ¬ï¼šGitHub Releases\nè®¸å¯è¯ï¼šMIT\n\n"
+            "ç¬¬ä¸‰æ–¹ç»„ä»¶è®¸å¯è¯¦è§ THIRD_PARTY_NOTICES.mdã€‚",
+        )
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        paths = [Path(item.toLocalFile()) for item in event.mimeData().urls() if item.isLocalFile()]
+        if not paths:
+            return
+        projects = [path for path in paths if path.suffix.lower() == ".vstproj"]
+        if projects:
+            self._open_project_path(projects[0])
+            event.acceptProposedAction()
+            return
+        for path in paths:
+            resolved = path.resolve()
+            if resolved.is_dir():
+                media_files = sorted(
+                    (
+                        item.resolve()
+                        for item in resolved.rglob("*")
+                        if item.is_file() and item.suffix.lower() in MEDIA_SUFFIXES
+                    ),
+                    key=lambda item: str(item).casefold(),
+                )
+                self._enqueue_media_files(media_files, resolved)
+            elif resolved.suffix.lower() in MEDIA_SUFFIXES:
+                self._enqueue_media_files([resolved], resolved.parent)
+        event.acceptProposedAction()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._task_is_running():
+            answer = QMessageBox.question(
+                self,
+                "ä»»åŠ¡ä»åœ¨è¿è¡Œ",
+                "è¯†åˆ«æˆ–ç¿»è¯‘ä»åœ¨è¿è¡Œã€‚æ˜¯å¦å¼ºåˆ¶æš‚åœä»»åŠ¡å¹¶é€€å‡ºï¼Ÿ\n\n"
+                "å·²ç»å®Œæˆå¹¶å†™å…¥é¡¹ç›®çš„æ‰¹æ¬¡ä¼šä¿ç•™ï¼Œå½“å‰æœªå®Œæˆæ‰¹æ¬¡å°†ä¸­æ–­ã€‚",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self._request_force_pause(wait=True)
+            if self.current_media_path:
+                media = self.current_media_path
+                self._set_media_status(media, "å·²å¼ºåˆ¶æš‚åœ", show_progress=False)
+                self.queued_media.discard(media)
+                self.current_media_path = None
+        if self.project:
+            self._save_side_context()
+            self.project.close()
+            self.project = None
+        super().closeEvent(event)
+
+    def _save_side_context(self) -> None:
+        if not self.project:
+            return
+        self.project.save_active_prompt(self.prompt_edit.toPlainText())
+        self.project.save_glossary(_parse_glossary(self.glossary_edit.toPlainText()))
+
+
+def _format_milliseconds(value: int) -> str:
+    hours, remainder = divmod(value, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+
+
+def _parse_timestamp(value: str) -> int:
+    parts = value.replace(",", ".").split(":")
+    if len(parts) != 3:
+        raise ValueError(value)
+    hours, minutes = int(parts[0]), int(parts[1])
+    seconds = float(parts[2])
+    return round((hours * 3600 + minutes * 60 + seconds) * 1000)
+
+
+def _parse_glossary(value: str) -> list[tuple[str, str]]:
+    result = []
+    for line in value.splitlines():
+        if "=" in line:
+            source, target = line.split("=", 1)
+            if source.strip() and target.strip():
+                result.append((source.strip(), target.strip()))
+    return result

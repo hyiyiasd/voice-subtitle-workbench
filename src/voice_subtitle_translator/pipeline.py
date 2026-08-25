@@ -25,6 +25,10 @@ class TranslationRunResult:
     stopped_by_switch: bool = False
 
 
+class TranslationCancelledError(RuntimeError):
+    pass
+
+
 class PipelineCoordinator:
     def __init__(self, project: Project) -> None:
         self.project = project
@@ -44,6 +48,7 @@ class PipelineCoordinator:
         batch_size: int = 20,
         provider_parameters: dict | None = None,
         on_batch_complete: Callable[[int, int], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> TranslationRunResult:
         settings = self.project.get_settings()
         if not settings.translation_enabled:
@@ -62,7 +67,8 @@ class PipelineCoordinator:
         self.project.set_task_status(task_id, TaskStatus.RUNNING)
         try:
             for batch_index, batch in enumerate(batches):
-                if not self.project.get_settings().translation_enabled:
+                stopped = should_stop and should_stop()
+                if stopped or not self.project.get_settings().translation_enabled:
                     result.stopped_by_switch = True
                     self.project.set_task_status(task_id, TaskStatus.PAUSED)
                     break
@@ -87,6 +93,9 @@ class PipelineCoordinator:
             else:
                 self.project.set_task_status(task_id, TaskStatus.COMPLETED)
         except Exception as exc:
+            if should_stop and should_stop():
+                self.project.set_task_status(task_id, TaskStatus.INTERRUPTED, str(exc))
+                raise TranslationCancelledError("翻译任务已被用户强制暂停。") from exc
             self.project.set_task_status(task_id, TaskStatus.FAILED, str(exc))
             raise
         return result

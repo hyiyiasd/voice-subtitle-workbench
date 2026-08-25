@@ -104,7 +104,9 @@ GPU 设置可按需下载 NVIDIA 官方 CUDA 12.9、cuBLAS 12.9 和 cuDNN 9.24 �
 
 使用远程翻译服务时，字幕、提示词、标题、背景、人物关系和术语可能发送给界面显示的服务商。关闭翻译时不会发送这些数据。离线模式下，程序禁止远程 HTTP 请求；已下载的本地模型仍可使用。
 
-在 GUI 的“翻译服务设置”中可选择 OpenAI、DeepSeek、智谱、Ollama、LM Studio 或自定义 OpenAI-compatible 服务。拖入媒体前勾选“启用翻译”后，识别完成会自动继续翻译；未勾选时只执行识别，不读取 API Key。
+在 GUI 的“翻译服务设置”中可选择 OpenAI、DeepSeek、智谱、Ollama、LM Studio 或自定义 OpenAI-compatible 服务。设置页可以输入一句测试内容并真实调用接口，成功时弹窗显示模型输出，失败时显示 HTTP 状态和服务返回原因。DeepSeek 默认使用 `https://api.deepseek.com` 和 `deepseek-v4-flash`。
+
+媒体加入任务树后不会自动处理。手动选择“转文字”或批量操作；勾选“启用翻译”后，识别完成会继续翻译，未勾选时只执行识别且不读取 API Key。任务异常时可点击“强制暂停”终止当前模型/API 请求并清空尚未开始的队列。
 
 API Key 不写入项目、配置或日志，只保存在 Windows 凭据管理器。Token 和费用信息均为估算，实际账单以服务商为准。
 

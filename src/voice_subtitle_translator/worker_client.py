@@ -74,6 +74,11 @@ class WorkerClient:
                 stream.close()
         self._stderr.close()
 
+    def terminate(self) -> None:
+        """Immediately stop the model subprocess and unblock an active IPC call."""
+        if self._process.poll() is None:
+            self._process.kill()
+
     def __enter__(self) -> WorkerClient:
         return self
 

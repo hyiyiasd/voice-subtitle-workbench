@@ -14,6 +14,10 @@ from .quality import apply_quality_flags
 from .worker_client import WorkerClient
 
 
+class TranscriptionCancelledError(RuntimeError):
+    pass
+
+
 class TranscriptionService:
     def __init__(
         self,
@@ -35,11 +39,18 @@ class TranscriptionService:
         device: str = "cpu",
         compute_type: str | None = None,
         on_progress: Callable[[str, int, int], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+        on_worker_change: Callable[[WorkerClient | None], None] | None = None,
     ) -> str:
+        def check_stop() -> None:
+            if should_stop and should_stop():
+                raise TranscriptionCancelledError("识别任务已被用户强制暂停。")
+
         def report(stage: str, completed: int) -> None:
             if on_progress:
                 on_progress(stage, completed, 100)
 
+        check_stop()
         media = self.project.resolve_media()
         if media is None:
             raise FileNotFoundError("项目没有可用的媒体文件，请先重新定位媒体。")
@@ -50,17 +61,32 @@ class TranscriptionService:
         report("正在标准化音频", 3)
         if not normalized.is_file():
             normalize_audio(self.ffmpeg_path, media, normalized)
+        check_stop()
         report("音频标准化完成，正在检测语音区间", 12)
-        with WorkerClient(cwd=self.paths.root) as vad_worker:
-            vad_result = vad_worker.call(
-                "vad.detect",
-                {
-                    "model_path": str(
-                        self.model_manager.model_path("silero-vad-v6") / "silero_vad.onnx"
-                    ),
-                    "wav_path": str(normalized),
-                },
-            )
+        try:
+            with WorkerClient(cwd=self.paths.root) as vad_worker:
+                if on_worker_change:
+                    on_worker_change(vad_worker)
+                vad_result = vad_worker.call(
+                    "vad.detect",
+                    {
+                        "model_path": str(
+                            self.model_manager.model_path("silero-vad-v6")
+                            / "silero_vad.onnx"
+                        ),
+                        "wav_path": str(normalized),
+                    },
+                )
+        except Exception as exc:
+            if should_stop and should_stop():
+                raise TranscriptionCancelledError(
+                    "识别任务已被用户强制暂停。"
+                ) from exc
+            raise
+        finally:
+            if on_worker_change:
+                on_worker_change(None)
+        check_stop()
         ranges = merge_speech_ranges(
             [SpeechRange(**value) for value in vad_result["ranges"]]
         )
@@ -80,7 +106,10 @@ class TranscriptionService:
         )
         try:
             with WorkerClient(cwd=self.paths.root) as worker:
+                if on_worker_change:
+                    on_worker_change(worker)
                 for index, speech_range in enumerate(ranges):
+                    check_stop()
                     recognition_progress = 20 + round(
                         index / max(len(ranges), 1) * 75
                     )
@@ -110,6 +139,7 @@ class TranscriptionService:
                                 "chunk": asdict(chunk),
                             },
                         )
+                        check_stop()
                     finally:
                         chunk_path.unlink(missing_ok=True)
                     candidates = [
@@ -127,12 +157,24 @@ class TranscriptionService:
                         f"已识别片段 {index + 1}/{len(ranges)}",
                         20 + round((index + 1) / max(len(ranges), 1) * 75),
                     )
+            if on_worker_change:
+                on_worker_change(None)
+            check_stop()
             report("正在检查字幕质量并保存", 97)
             self._save_quality_flags()
             self.project.set_task_status(task_id, TaskStatus.COMPLETED)
             report("识别完成", 100)
             return task_id
         except Exception as exc:
+            if on_worker_change:
+                on_worker_change(None)
+            if isinstance(exc, TranscriptionCancelledError) or (
+                should_stop and should_stop()
+            ):
+                self.project.set_task_status(task_id, TaskStatus.INTERRUPTED, str(exc))
+                if isinstance(exc, TranscriptionCancelledError):
+                    raise
+                raise TranscriptionCancelledError("识别任务已被用户强制暂停。") from exc
             self.project.set_task_status(task_id, TaskStatus.FAILED, str(exc))
             raise
 
