@@ -88,6 +88,7 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     ]
     menu_labels = [action.text() for action in window.menuBar().actions()]
     assert menu_labels == ["项目", "处理", "设置", "帮助"]
+    assert not hasattr(window, "detail_log")
     window.close()
 
 
