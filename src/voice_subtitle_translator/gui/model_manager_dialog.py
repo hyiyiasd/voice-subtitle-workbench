@@ -130,6 +130,11 @@ class ModelManagerDialog(QDialog):
         model = self.manager.models[model_id]
         descriptor = model.descriptor
         availability = "可自动下载" if model.downloadable else "暂不提供自动下载"
+        if model.download_mirrors:
+            mirror_hosts = " → ".join(_host(url) for url in model.download_mirrors)
+            download_channel = f"{mirror_hosts} → huggingface.co（自动回退）"
+        else:
+            download_channel = "官方源"
         note = f"<p><b>注意：</b>{escape(model.note)}</p>" if model.note else ""
         source = escape(descriptor.source)
         self.details.setHtml(
@@ -139,6 +144,7 @@ class ModelManagerDialog(QDialog):
             f"<b>语言：</b>{escape(_format_languages(descriptor.languages))}　"
             f"<b>运行时：</b>{escape(descriptor.runtime)}　"
             f"<b>下载：</b>{availability}<br>"
+            f"<b>下载通道：</b>{download_channel}<br>"
             f'<b>来源：</b><a href="{source}">{source}</a></p>'
             f"{note}"
         )
@@ -215,3 +221,7 @@ def _format_size(size_bytes: int) -> str:
 def _format_languages(languages: tuple[str, ...]) -> str:
     names = {"multilingual": "多语言", "ja": "日语", "en": "英语"}
     return "/".join(names.get(language, language) for language in languages)
+
+
+def _host(url: str) -> str:
+    return url.split("/", 3)[2] if "://" in url else url

@@ -9,7 +9,11 @@ import pytest
 
 from voice_subtitle_translator.domain import ProjectSettings
 from voice_subtitle_translator.media import SpeechRange
-from voice_subtitle_translator.model_manager import ModelIntegrityError, ModelManager
+from voice_subtitle_translator.model_manager import (
+    ModelIntegrityError,
+    ModelManager,
+    _download_urls,
+)
 from voice_subtitle_translator.paths import AppPaths
 from voice_subtitle_translator.project import Project
 from voice_subtitle_translator.transcription import TranscriptionService
@@ -119,6 +123,14 @@ def test_bundled_manifest_has_descriptions_and_consistent_sizes(tmp_path: Path) 
             assert model.descriptor.size_bytes == sum(
                 artifact.size_bytes for artifact in model.artifacts
             )
+    tiny = manager.models["faster-whisper-tiny"]
+    tiny_weights = next(
+        artifact for artifact in tiny.artifacts if artifact.relative_path == "model.bin"
+    )
+    urls = _download_urls(tiny, tiny_weights)
+    assert urls[0].startswith("https://modelscope.cn/models/Systran/")
+    assert urls[1].startswith("https://hf-mirror.com/Systran/")
+    assert urls[-1].startswith("https://huggingface.co/Systran/")
 
 
 def test_transcription_saves_batch_and_removes_chunk(tmp_path: Path, monkeypatch) -> None:

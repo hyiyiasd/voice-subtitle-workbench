@@ -45,6 +45,8 @@ def test_model_manager_shows_detailed_introduction(qtbot, tmp_path: Path) -> Non
     qtbot.addWidget(dialog)
     assert dialog.table.rowCount() == 8
     assert "这不是转文字模型" in dialog.details.toPlainText()
+    dialog.table.selectRow(3)
+    assert "modelscope.cn → hf-mirror.com → huggingface.co" in dialog.details.toPlainText()
 
 
 def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:

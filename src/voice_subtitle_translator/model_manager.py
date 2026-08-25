@@ -34,6 +34,7 @@ class ManagedModel:
     descriptor: ModelDescriptor
     artifacts: tuple[ModelArtifact, ...]
     downloadable: bool
+    download_mirrors: tuple[str, ...] = ()
     recommendation: str = ""
     description: str = ""
     note: str = ""
@@ -50,6 +51,9 @@ class ModelManager:
         payload = json.loads(path.read_text(encoding="utf-8"))
         result = {}
         for value in payload["models"]:
+            download_mirrors = tuple(value.get("download_mirrors", []))
+            if any(not mirror.startswith("https://") for mirror in download_mirrors):
+                raise ValueError("模型下载镜像必须使用 HTTPS。")
             descriptor = ModelDescriptor(
                 id=value["id"],
                 display_name=value["display_name"],
@@ -67,6 +71,7 @@ class ModelManager:
                 descriptor=descriptor,
                 artifacts=artifacts,
                 downloadable=bool(value.get("downloadable", False)),
+                download_mirrors=download_mirrors,
                 recommendation=value.get("recommendation", ""),
                 description=value.get("description", ""),
                 note=value.get("note", ""),
@@ -131,21 +136,31 @@ class ModelManager:
                         on_progress(completed_bytes, total_bytes)
                     continue
                 temporary = self.paths.temp / f"{model_id}-{target.name}.part"
-                temporary.unlink(missing_ok=True)
-                with client.stream("GET", artifact.url) as response:
-                    response.raise_for_status()
-                    with temporary.open("wb") as output:
-                        for chunk in response.iter_bytes():
-                            output.write(chunk)
-                            if on_progress:
-                                on_progress(completed_bytes + output.tell(), total_bytes)
-                if temporary.stat().st_size != artifact.size_bytes:
+                failures = []
+                for download_url in _download_urls(model, artifact):
                     temporary.unlink(missing_ok=True)
-                    raise ModelIntegrityError(f"下载大小不符：{artifact.relative_path}")
-                if file_sha256(temporary) != artifact.sha256.lower():
-                    temporary.unlink(missing_ok=True)
-                    raise ModelIntegrityError(f"下载校验失败：{artifact.relative_path}")
-                temporary.replace(target)
+                    try:
+                        with client.stream("GET", download_url) as response:
+                            response.raise_for_status()
+                            with temporary.open("wb") as output:
+                                for chunk in response.iter_bytes():
+                                    output.write(chunk)
+                                    if on_progress:
+                                        on_progress(completed_bytes + output.tell(), total_bytes)
+                        if temporary.stat().st_size != artifact.size_bytes:
+                            raise ModelIntegrityError(f"下载大小不符：{artifact.relative_path}")
+                        if file_sha256(temporary) != artifact.sha256.lower():
+                            raise ModelIntegrityError(f"下载校验失败：{artifact.relative_path}")
+                        temporary.replace(target)
+                        break
+                    except Exception as exc:
+                        temporary.unlink(missing_ok=True)
+                        failures.append(f"{_download_host(download_url)}：{exc}")
+                else:
+                    detail = "；".join(failures)
+                    raise ModelUnavailableError(
+                        f"所有下载通道均失败：{artifact.relative_path}。{detail}"
+                    )
                 completed_bytes += artifact.size_bytes
                 if on_progress:
                     on_progress(completed_bytes, total_bytes)
@@ -174,3 +189,14 @@ def _safe_child(root: Path, relative_path: str) -> Path:
     if target != resolved_root and resolved_root not in target.parents:
         raise ValueError("模型清单包含越界路径。")
     return target
+
+
+def _download_urls(model: ManagedModel, artifact: ModelArtifact) -> tuple[str, ...]:
+    relative_path = artifact.relative_path.lstrip("/")
+    urls = [f"{mirror.rstrip('/')}/{relative_path}" for mirror in model.download_mirrors]
+    urls.append(artifact.url)
+    return tuple(dict.fromkeys(urls))
+
+
+def _download_host(url: str) -> str:
+    return url.split("/", 3)[2] if "://" in url else url

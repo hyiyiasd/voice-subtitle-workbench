@@ -94,6 +94,10 @@
       "recommended_vram_mb": 1000,
       "runtime": "ctranslate2",
       "downloadable": true,
+      "download_mirrors": [
+        "https://modelscope.cn/models/Systran/faster-whisper-tiny/resolve/9530ee785810b90b6e14e404dea7806b56518394",
+        "https://hf-mirror.com/Systran/faster-whisper-tiny/resolve/d90ca5fe260221311c53c58e660288d3deb8d356"
+      ],
       "recommendation": "快速预览、低配置电脑、短音频",
       "description": "Whisper 多语言系列中体积最小、速度最快的一档，总下载量约 75 MB。它支持日语、英语、中文等多种语言，可以在 CPU 上运行，非常适合先快速查看录音大意、测试软件流程或处理发音清晰的短音频。代价是识别精度和抗噪能力最低，遇到多人对话、背景音乐、专有名词或含糊发音时更容易漏字和听错，不建议作为重要字幕的最终结果。",
       "artifacts": [
@@ -135,6 +139,10 @@
       "recommended_vram_mb": 1200,
       "runtime": "ctranslate2",
       "downloadable": true,
+      "download_mirrors": [
+        "https://modelscope.cn/models/Systran/faster-whisper-base/resolve/f445defbb81556b9d64c07284683f4cdc2cc17f5",
+        "https://hf-mirror.com/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
+      ],
       "recommendation": "轻量日常识别；比 tiny 更稳",
       "description": "约 141 MB 的轻量多语言 Whisper 模型，在速度、体积和基础准确率之间比 tiny 更均衡。适合普通电脑、课堂录音、清晰访谈以及不想下载大型模型的用户；CPU int8 模式也能使用。它对一般句子和常见词汇通常比 tiny 稳定，但复杂日语口语、重叠说话、强背景声和精细时间轴仍可能不够理想，正式字幕建议至少尝试 small 并比较结果。",
       "artifacts": [
@@ -176,6 +184,10 @@
       "recommended_vram_mb": 2000,
       "runtime": "ctranslate2",
       "downloadable": true,
+      "download_mirrors": [
+        "https://modelscope.cn/models/Systran/faster-whisper-small/resolve/ace8b2ad9dee031c53b6371f6c3c918b5e4f1db9",
+        "https://hf-mirror.com/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120"
+      ],
       "recommendation": "多数用户首选；速度与精度均衡",
       "description": "约 464 MB 的多语言 Whisper 模型，是轻量模型里更适合认真做字幕的一档。它比 tiny 和 base 更能应对自然语速、口语、省略、轻度噪声以及日英混合内容，同时仍明显小于 medium。RTX 3070 可轻松运行，CPU int8 也可以使用但速度会更慢。若没有明确偏好，建议先用 small；日语纯语音且追求轻量时，也可以与 ReazonSpeech K2 的结果比较。",
       "artifacts": [
