@@ -35,3 +35,22 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     assert window.translation_toggle.isChecked() is False
     window.close()
 
+
+def test_dropping_media_creates_green_project_and_starts_recognition(
+    qtbot, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure()
+    media = tmp_path / "节目.mp3"
+    media.write_bytes(b"test-owned-media")
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    calls: list[bool] = []
+    window.transcribe_media = lambda *, automatic=False: calls.append(automatic)  # type: ignore[method-assign]
+    window._ingest_media(media)
+    qtbot.waitUntil(lambda: bool(calls))
+    assert calls == [True]
+    assert window.project is not None
+    assert window.project.path.parent == paths.data / "projects"
+    assert window.project.resolve_media() == media.resolve()
+    window.close()

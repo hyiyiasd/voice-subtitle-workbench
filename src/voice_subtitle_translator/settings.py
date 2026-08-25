@@ -11,6 +11,11 @@ class GlobalSettings:
     last_translation_enabled: bool = False
     window_geometry: str = ""
     last_project: str = ""
+    asr_device: str = "cpu"
+    translation_provider: str = ""
+    translation_base_url: str = ""
+    translation_model: str = ""
+    translation_structured_output: bool = False
 
 
 class SettingsStore:
@@ -34,4 +39,3 @@ class SettingsStore:
             encoding="utf-8",
         )
         temporary.replace(self._path)
-

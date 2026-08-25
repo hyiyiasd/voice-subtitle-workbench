@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, QUrl, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -28,7 +29,7 @@ from voice_subtitle_translator.domain import ProjectSettings, Segment
 from voice_subtitle_translator.model_manager import ModelManager
 from voice_subtitle_translator.paths import AppPaths, bundled_resource
 from voice_subtitle_translator.pipeline import PipelineCoordinator
-from voice_subtitle_translator.project import Project
+from voice_subtitle_translator.project import Project, quick_file_fingerprint
 from voice_subtitle_translator.providers.openai_compatible import (
     OpenAICompatibleProvider,
     ProviderConfig,
@@ -46,7 +47,23 @@ from voice_subtitle_translator.transcription import TranscriptionService
 
 from .model_manager_dialog import ModelManagerDialog
 from .player import MpvPlayerWidget
+from .translation_settings_dialog import TranslationSettingsDialog
 from .waveform import WaveformWidget
+
+MEDIA_SUFFIXES = {
+    ".mp3",
+    ".wav",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".mp4",
+    ".mkv",
+    ".mov",
+    ".avi",
+    ".webm",
+}
 
 
 class SegmentTableModel(QAbstractTableModel):
@@ -274,6 +291,15 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         layout = QVBoxLayout(central)
+        self.drop_hint = QLabel(
+            "将 MP3、WAV、MP4 等音视频拖到这里，程序会自动识别；启用翻译后会继续翻译"
+        )
+        self.drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.drop_hint.setStyleSheet(
+            "padding:12px;border:2px dashed #7a8aa0;border-radius:6px;"
+            "font-size:15px;color:#405060"
+        )
+        layout.addWidget(self.drop_hint)
         layout.addWidget(splitter)
         layout.addWidget(footer)
         self.setCentralWidget(central)
@@ -301,12 +327,12 @@ class MainWindow(QMainWindow):
         open_action = QAction("打开项目", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self.open_project)
-        media_action = QAction("添加媒体", self)
+        media_action = QAction("打开媒体并转换", self)
         media_action.triggered.connect(self.add_media)
         models_action = QAction("模型管理", self)
         models_action.triggered.connect(self.show_model_manager)
         transcribe_action = QAction("开始识别", self)
-        transcribe_action.triggered.connect(self.transcribe_media)
+        transcribe_action.triggered.connect(lambda: self.transcribe_media(automatic=False))
         check_action = QAction("检查字幕", self)
         check_action.triggered.connect(self.check_quality)
         self.problems_action = QAction("仅看问题字幕", self)
@@ -316,7 +342,9 @@ class MainWindow(QMainWindow):
         replace_action.setShortcut(QKeySequence.StandardKey.Find)
         replace_action.triggered.connect(self.search_replace)
         translate_action = QAction("翻译未完成字幕", self)
-        translate_action.triggered.connect(self.translate_pending)
+        translate_action.triggered.connect(lambda: self.translate_pending())
+        translation_settings_action = QAction("翻译服务设置", self)
+        translation_settings_action.triggered.connect(self.show_translation_settings)
         export_action = QAction("导出字幕", self)
         export_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         export_action.triggered.connect(self.export_dialog)
@@ -331,6 +359,7 @@ class MainWindow(QMainWindow):
             check_action,
             self.problems_action,
             replace_action,
+            translation_settings_action,
             translate_action,
             export_action,
         ):
@@ -395,12 +424,64 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "无法打开项目", str(exc))
 
     def add_media(self) -> None:
-        if not self._require_project():
-            return
-        path, _ = QFileDialog.getOpenFileName(self, "选择音视频")
+        filters = (
+            "音视频文件 (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus "
+            "*.mp4 *.mkv *.mov *.avi *.webm);;所有文件 (*)"
+        )
+        path, _ = QFileDialog.getOpenFileName(self, "选择要转文字的音视频", "", filters)
         if path:
-            self.project.set_media(path)
-            self.player.load(Path(path))
+            self._ingest_media(Path(path))
+
+    def _ingest_media(self, media_path: Path) -> None:
+        media_path = media_path.resolve()
+        if media_path.suffix.lower() not in MEDIA_SUFFIXES:
+            QMessageBox.information(
+                self,
+                "不支持的文件",
+                "请拖入 MP3、WAV、M4A、FLAC、MP4、MKV、MOV 或 WebM 等音视频文件。",
+            )
+            return
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            QMessageBox.information(self, "识别正在运行", "请等待当前媒体识别完成。")
+            return
+        if self.translation_thread and self.translation_thread.isRunning():
+            QMessageBox.information(self, "翻译正在运行", "请等待当前媒体翻译完成。")
+            return
+        try:
+            fingerprint = quick_file_fingerprint(media_path)
+            safe_stem = re.sub(r"[^\w\-]+", "_", media_path.stem, flags=re.UNICODE).strip("_")
+            safe_stem = safe_stem[:60] or "media"
+            projects_dir = self.paths.data / "projects"
+            projects_dir.mkdir(parents=True, exist_ok=True)
+            project_path = projects_dir / f"{safe_stem}-{fingerprint[:12]}.vstproj"
+            if project_path.exists():
+                project = Project.open(project_path)
+            else:
+                project = Project.create(
+                    project_path,
+                    ProjectSettings(
+                        translation_enabled=self.global_settings.last_translation_enabled
+                    ),
+                )
+            project.set_media(media_path)
+            self._set_project(project)
+            self.global_settings.last_project = str(project_path)
+            self.settings_store.save(self.global_settings)
+            self.player.load(media_path)
+        except Exception as exc:
+            QMessageBox.critical(self, "无法导入媒体", str(exc))
+            return
+        existing = self.project.list_segments()
+        if existing:
+            self.statusBar().showMessage(
+                f"已恢复该媒体的 {len(existing)} 条字幕；可继续校对或重新识别", 8000
+            )
+            if self.translation_toggle.isChecked() and any(
+                not segment.has_valid_translation for segment in existing
+            ):
+                QTimer.singleShot(0, self.translate_pending)
+        else:
+            QTimer.singleShot(0, lambda: self.transcribe_media(automatic=True))
 
     def show_model_manager(self) -> None:
         offline = self.project.get_settings().offline if self.project else False
@@ -411,7 +492,7 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
-    def transcribe_media(self) -> None:
+    def transcribe_media(self, *, automatic: bool = False) -> None:
         if not self._require_project():
             return
         if self.project.resolve_media() is None:
@@ -430,25 +511,43 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "模型尚未安装",
-                "识别需要 Silero VAD 和至少一个 ASR 模型，请先打开“模型管理”下载。",
+                "首次转换需要 Silero VAD 和至少一个语音识别模型。"
+                "请在模型管理器中下载后关闭窗口，程序会继续检查。",
             )
-            return
-        model_id, ok = QInputDialog.getItem(
-            self, "选择识别模型", "模型：", installed, editable=False
-        )
-        if not ok:
-            return
-        device_label, ok = QInputDialog.getItem(
-            self,
-            "选择运行设备",
-            "设备（GPU 初始化失败时不会静默切换）：",
-            ["CPU (int8)", "CUDA (int8_float16)"],
-            editable=False,
-        )
-        if not ok:
-            return
-        device = "cuda" if device_label.startswith("CUDA") else "cpu"
+            self.show_model_manager()
+            manager = ModelManager(self.paths, bundled_resource("models/manifest.json"))
+            installed = [
+                model.descriptor.id
+                for model in manager.models.values()
+                if model.descriptor.id != "silero-vad-v6"
+                and manager.is_installed(model.descriptor.id)
+            ]
+            if not manager.is_installed("silero-vad-v6") or not installed:
+                self.statusBar().showMessage("尚未安装完整识别模型，媒体项目已保存", 8000)
+                return
         settings = self.project.get_settings()
+        if automatic:
+            model_id = settings.asr_model if settings.asr_model in installed else installed[0]
+            device = self.global_settings.asr_device
+        else:
+            model_id, ok = QInputDialog.getItem(
+                self, "选择识别模型", "模型：", installed, editable=False
+            )
+            if not ok:
+                return
+            device_label, ok = QInputDialog.getItem(
+                self,
+                "选择运行设备",
+                "设备（GPU 初始化失败时不会静默切换）：",
+                ["CPU (int8)", "CUDA (int8_float16)"],
+                1 if self.global_settings.asr_device == "cuda" else 0,
+                editable=False,
+            )
+            if not ok:
+                return
+            device = "cuda" if device_label.startswith("CUDA") else "cpu"
+            self.global_settings.asr_device = device
+            self.settings_store.save(self.global_settings)
         settings.asr_model = model_id
         self.project.save_settings(settings)
         thread = TranscriptionThread(
@@ -474,6 +573,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"识别完成：共 {segment_count} 条字幕（任务 {task_id[:8]}）", 8000
         )
+        if segment_count and self.translation_toggle.isChecked():
+            QTimer.singleShot(0, self.translate_pending)
 
     def _transcription_failed(self, message: str) -> None:
         QMessageBox.critical(self, "识别失败", message)
@@ -486,6 +587,13 @@ class MainWindow(QMainWindow):
         if self.project:
             PipelineCoordinator(self.project).set_translation_enabled(checked)
         self._update_workflow_label()
+        if (
+            checked
+            and self.project
+            and self.project.list_segments()
+            and not (self.transcription_thread and self.transcription_thread.isRunning())
+        ):
+            QTimer.singleShot(0, self.translate_pending)
 
     def _update_workflow_label(self) -> None:
         if self.translation_toggle.isChecked():
@@ -511,39 +619,91 @@ class MainWindow(QMainWindow):
         problem_count = sum(bool(item.quality_flags) for item in segments)
         self.statusBar().showMessage(f"检查完成：{problem_count} 条字幕需要注意", 5000)
 
+    def show_translation_settings(self) -> bool:
+        provider = self.global_settings.translation_provider or "openai"
+        credential_store = CredentialStore()
+        has_saved_key = bool(credential_store.get(provider))
+        dialog = TranslationSettingsDialog(
+            provider=provider,
+            base_url=self.global_settings.translation_base_url,
+            model=self.global_settings.translation_model,
+            has_saved_key=has_saved_key,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        values = dialog.values()
+        if not values.base_url or not values.model:
+            QMessageBox.information(self, "配置不完整", "请填写 Base URL 和模型名称。")
+            return False
+        is_local = values.base_url.startswith(("http://127.0.0.1", "http://localhost"))
+        if values.api_key:
+            credential_store.set(values.provider, values.api_key)
+        elif not is_local and not credential_store.get(values.provider):
+            QMessageBox.information(self, "缺少 API Key", "远程翻译服务需要 API Key。")
+            return False
+        self.global_settings.translation_provider = values.provider
+        self.global_settings.translation_base_url = values.base_url
+        self.global_settings.translation_model = values.model
+        self.global_settings.translation_structured_output = values.structured_output
+        self.settings_store.save(self.global_settings)
+        if self.project:
+            settings = self.project.get_settings()
+            settings.translation_provider = values.provider
+            settings.translation_model = values.model
+            self.project.save_settings(settings)
+        self.statusBar().showMessage(f"已保存翻译服务：{values.provider} / {values.model}", 6000)
+        return True
+
     def translate_pending(self) -> None:
         if not self._require_project():
             return
         if not self.project.get_settings().translation_enabled:
             QMessageBox.information(self, "未启用翻译", "请先开启顶部“启用翻译”开关。")
             return
-        base_url, ok = QInputDialog.getText(
-            self, "翻译服务", "OpenAI-compatible Base URL：", text="http://127.0.0.1:11434/v1"
-        )
-        if not ok:
-            return
-        model, ok = QInputDialog.getText(self, "翻译模型", "模型名称：")
-        if not ok or not model:
-            return
-        settings = self.project.get_settings()
-        settings.translation_model = model
-        self.project.save_settings(settings)
-        is_local = base_url.startswith(("http://127.0.0.1", "http://localhost"))
-        key = "" if is_local else (CredentialStore().get("openai-compatible") or "")
         if self.translation_thread and self.translation_thread.isRunning():
             QMessageBox.information(self, "翻译正在运行", "请等待当前翻译批次完成。")
             return
+        if (
+            not self.global_settings.translation_base_url
+            or not self.global_settings.translation_model
+        ) and not self.show_translation_settings():
+            self.statusBar().showMessage("识别已完成；尚未配置翻译服务", 8000)
+            return
+        settings = self.project.get_settings()
+        provider_id = self.global_settings.translation_provider or "openai-compatible"
+        base_url = self.global_settings.translation_base_url
+        model = self.global_settings.translation_model
+        is_local = base_url.startswith(("http://127.0.0.1", "http://localhost"))
+        key = "" if is_local else (CredentialStore().get(provider_id) or "")
+        if not is_local and not key:
+            if not self.show_translation_settings():
+                return
+            provider_id = self.global_settings.translation_provider
+            base_url = self.global_settings.translation_base_url
+            model = self.global_settings.translation_model
+            is_local = base_url.startswith(("http://127.0.0.1", "http://localhost"))
+            key = "" if is_local else (CredentialStore().get(provider_id) or "")
+            if not is_local and not key:
+                return
+        settings.translation_provider = provider_id
+        settings.translation_model = model
+        self.project.save_settings(settings)
         self._save_side_context()
         thread = TranslationThread(
             project_path=self.project.path,
             config=ProviderConfig(
-                base_url=base_url, api_key=key, structured_output=False, offline=settings.offline
+                id=provider_id,
+                base_url=base_url,
+                api_key=key,
+                structured_output=self.global_settings.translation_structured_output,
+                offline=settings.offline,
             ),
             prompt=self.prompt_edit.toPlainText(),
             glossary=_parse_glossary(self.glossary_edit.toPlainText()),
             parent=self,
         )
-        self.task_list.addItem(f"翻译：{model}")
+        self.task_list.addItem(f"翻译：{provider_id} / {model}")
         thread.progress.connect(
             lambda done, total: self.statusBar().showMessage(f"翻译批次 {done}/{total}")
         )
@@ -669,9 +829,8 @@ class MainWindow(QMainWindow):
         first = paths[0]
         if first.suffix.lower() == ".vstproj":
             self._open_project_path(first)
-        elif self._require_project():
-            self.project.set_media(first)
-            self.player.load(first)
+        else:
+            self._ingest_media(first)
         event.acceptProposedAction()
 
     def closeEvent(self, event) -> None:  # noqa: N802

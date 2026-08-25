@@ -6,6 +6,8 @@ from array import array
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 
 @dataclass(frozen=True, slots=True)
 class SpeechRange:
@@ -14,6 +16,9 @@ class SpeechRange:
 
 
 def normalize_audio(ffmpeg: Path, source: Path, destination: Path) -> None:
+    if not ffmpeg.is_file():
+        _normalize_audio_with_pyav(source, destination)
+        return
     destination.parent.mkdir(parents=True, exist_ok=True)
     command = [
         str(ffmpeg),
@@ -34,6 +39,20 @@ def normalize_audio(ffmpeg: Path, source: Path, destination: Path) -> None:
         str(destination),
     ]
     subprocess.run(command, check=True, creationflags=_no_window_flag())
+
+
+def _normalize_audio_with_pyav(source: Path, destination: Path) -> None:
+    """Decode common media through the PyAV runtime already bundled with faster-whisper."""
+    from faster_whisper.audio import decode_audio
+
+    samples = decode_audio(str(source), sampling_rate=16_000)
+    pcm = (np.clip(samples, -1.0, 1.0) * 32_767).astype("<i2", copy=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(destination), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(pcm.tobytes())
 
 
 def merge_speech_ranges(
@@ -107,4 +126,3 @@ def read_pcm16_mono(path: Path) -> tuple[list[float], int]:
         samples = array("h")
         samples.frombytes(source.readframes(source.getnframes()))
     return [sample / 32768.0 for sample in samples], rate
-

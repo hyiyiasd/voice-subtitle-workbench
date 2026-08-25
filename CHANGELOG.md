@@ -13,3 +13,5 @@
 - Silero VAD、ReazonSpeech K2 和 faster-whisper 的本地识别链路及固定模型清单。
 - 带逐文件 SHA-256 校验和下载进度的绿色模型管理器。
 - 简体中文 PySide6 工作台。
+- 媒体优先工作流：拖入 MP3/WAV/MP4 自动建项目、识别并按开关继续翻译。
+- 可持久化的 API、本地 Ollama/LM Studio 和自定义翻译服务设置。

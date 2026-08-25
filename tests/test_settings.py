@@ -28,6 +28,23 @@ def test_global_translation_default_is_false_and_persists(tmp_path: Path) -> Non
     assert store.load().last_translation_enabled is True
 
 
+def test_translation_service_settings_persist_without_api_key(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure()
+    store = SettingsStore(paths)
+    store.save(
+        GlobalSettings(
+            translation_provider="ollama",
+            translation_base_url="http://127.0.0.1:11434/v1",
+            translation_model="qwen2.5:7b",
+        )
+    )
+    loaded = store.load()
+    assert loaded.translation_provider == "ollama"
+    assert loaded.translation_model == "qwen2.5:7b"
+    assert "api_key" not in (paths.config / "settings.json").read_text(encoding="utf-8")
+
+
 def test_paths_only_create_inside_given_root(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     paths.ensure()

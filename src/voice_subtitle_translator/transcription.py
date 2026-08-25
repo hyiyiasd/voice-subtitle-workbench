@@ -37,8 +37,6 @@ class TranscriptionService:
         media = self.project.resolve_media()
         if media is None:
             raise FileNotFoundError("项目没有可用的媒体文件，请先重新定位媒体。")
-        if not self.ffmpeg_path.is_file():
-            raise FileNotFoundError(f"未找到 FFmpeg：{self.ffmpeg_path}")
         self.model_manager.verify("silero-vad-v6")
         self.model_manager.verify(model_id)
         settings = self.project.get_settings()

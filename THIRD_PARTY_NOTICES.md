@@ -13,8 +13,8 @@
 | keyring | Windows 凭据 | MIT |
 | ReazonSpeech | ASR | Apache-2.0；模型以具体模型卡为准 |
 | faster-whisper | ASR | MIT；模型以具体模型卡为准 |
+| PyAV | 媒体音轨解码回退 | BSD-3-Clause；其二进制依赖仍须按实际 wheel 审计 |
 | CTranslate2 | 推理 | MIT |
 | Silero VAD | VAD | MIT |
 
 发布工作流必须从锁文件和供应清单生成 SBOM，并把各许可证全文复制到产物的 `licenses` 目录。
-
