@@ -101,6 +101,13 @@ class GPUSettingsDialog(QDialog):
         layout.addWidget(self.details)
         layout.addWidget(runtime_title)
         layout.addLayout(runtime_row)
+        source_hint = QLabel(
+            "下载顺序：清华 PyPI 镜像 → 阿里云 PyPI 镜像 → "
+            "官方 PyPI（自动回退并校验 SHA-256）"
+        )
+        source_hint.setWordWrap(True)
+        source_hint.setStyleSheet("color:#666")
+        layout.addWidget(source_hint)
         layout.addWidget(self.progress)
         layout.addWidget(buttons)
         self._show_profile()
@@ -139,7 +146,8 @@ class GPUSettingsDialog(QDialog):
             self,
             "下载 NVIDIA GPU 运行库",
             "将从 NVIDIA 在 PyPI 发布的官方软件包下载约 1.27 GB，\n"
-            "解压后保存到程序旁 data\\gpu-runtime。\n"
+            "优先使用已验证的国内镜像，失败后自动回退官方源。\n"
+            f"解压后保存到：\n{self.manager.bin_dir.resolve()}\n"
             "运行库使用 NVIDIA Proprietary Software 许可，是否继续？",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -165,12 +173,20 @@ class GPUSettingsDialog(QDialog):
     def _download_succeeded(self) -> None:
         self.progress.hide()
         self._refresh_runtime_status()
-        QMessageBox.information(self, "GPU 运行库", "CUDA 12.9 绿色运行库安装完成。")
+        QMessageBox.information(
+            self,
+            "GPU 运行库",
+            f"CUDA 12.9 绿色运行库安装完成。\n\n保存目录：\n{self.manager.bin_dir.resolve()}",
+        )
 
     def _download_failed(self, message: str) -> None:
         self.progress.hide()
         self._refresh_runtime_status()
-        QMessageBox.critical(self, "GPU 运行库下载失败", message)
+        QMessageBox.critical(
+            self,
+            "GPU 运行库下载失败",
+            f"{message}\n\n{self.manager.manual_install_text()}",
+        )
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self.download_thread and self.download_thread.isRunning():

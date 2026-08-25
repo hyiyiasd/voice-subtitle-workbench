@@ -66,7 +66,9 @@ class ModelManagerDialog(QDialog):
         self.details.setOpenExternalLinks(True)
         self.details.setMinimumHeight(150)
 
-        self.status = QLabel("离线模式：禁止下载" if offline else "模型保存于程序旁 data\\models")
+        mode = "离线模式：禁止下载\n" if offline else ""
+        self.status = QLabel(f"{mode}模型总目录：{manager.paths.models.resolve()}")
+        self.status.setWordWrap(True)
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.download_button = QPushButton("下载所选")
@@ -137,6 +139,7 @@ class ModelManagerDialog(QDialog):
             download_channel = "官方源"
         note = f"<p><b>注意：</b>{escape(model.note)}</p>" if model.note else ""
         source = escape(descriptor.source)
+        install_path = escape(str(self.manager.model_path(model_id).resolve()))
         self.details.setHtml(
             f"<h3>{escape(descriptor.display_name)}</h3>"
             f"<p>{escape(model.description or '暂无详细介绍。')}</p>"
@@ -145,7 +148,9 @@ class ModelManagerDialog(QDialog):
             f"<b>运行时：</b>{escape(descriptor.runtime)}　"
             f"<b>下载：</b>{availability}<br>"
             f"<b>下载通道：</b>{download_channel}<br>"
+            f"<b>安装目录：</b><code>{install_path}</code><br>"
             f'<b>来源：</b><a href="{source}">{source}</a></p>'
+            f"<p>自动下载失败时，可按模型清单中的文件结构手动放入上述目录，然后点击“校验所选”。</p>"
             f"{note}"
         )
 
@@ -163,7 +168,10 @@ class ModelManagerDialog(QDialog):
         if self.download_thread and self.download_thread.isRunning():
             return
         self.download_button.setEnabled(False)
-        self.status.setText(f"正在下载并校验：{model_id}")
+        self.status.setText(
+            f"正在下载并校验：{model_id}\n"
+            f"保存目录：{self.manager.model_path(model_id).resolve()}"
+        )
         thread = ModelDownloadThread(self.manager, model_id, offline=self.offline, parent=self)
         thread.succeeded.connect(self._download_succeeded)
         thread.failed.connect(self._download_failed)
@@ -176,14 +184,28 @@ class ModelManagerDialog(QDialog):
     def _download_succeeded(self, model_id: str) -> None:
         self.download_button.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.status.setText(f"下载和校验完成：{model_id}")
+        self.status.setText(
+            f"下载和校验完成：{model_id}\n"
+            f"保存目录：{self.manager.model_path(model_id).resolve()}"
+        )
         self._refresh()
 
     def _download_failed(self, message: str) -> None:
         self.download_button.setEnabled(True)
         self.progress_bar.setVisible(False)
-        self.status.setText("下载失败")
-        QMessageBox.critical(self, "模型下载失败", message)
+        model_id = self._selected_model_id()
+        target = (
+            self.manager.model_path(model_id).resolve()
+            if model_id
+            else self.manager.paths.models.resolve()
+        )
+        self.status.setText(f"下载失败\n手动放置目录：{target}")
+        QMessageBox.critical(
+            self,
+            "模型下载失败",
+            f"{message}\n\n你可以自行下载模型文件并放到：\n{target}\n\n"
+            "放置完成后点击“校验所选”。",
+        )
 
     def _download_progress(self, completed: int, total: int) -> None:
         self.progress_bar.setVisible(True)
@@ -197,9 +219,18 @@ class ModelManagerDialog(QDialog):
             return
         try:
             self.manager.verify(model_id)
-            QMessageBox.information(self, "校验完成", f"{model_id} 校验通过。")
+            model_path = self.manager.model_path(model_id).resolve()
+            QMessageBox.information(
+                self,
+                "校验完成",
+                f"{model_id} 校验通过。\n\n模型目录：\n{model_path}",
+            )
         except Exception as exc:
-            QMessageBox.critical(self, "校验失败", str(exc))
+            QMessageBox.critical(
+                self,
+                "校验失败",
+                f"{exc}\n\n请检查模型目录：\n{self.manager.model_path(model_id).resolve()}",
+            )
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self.download_thread and self.download_thread.isRunning():

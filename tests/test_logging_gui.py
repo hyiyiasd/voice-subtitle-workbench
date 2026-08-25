@@ -47,6 +47,8 @@ def test_model_manager_shows_detailed_introduction(qtbot, tmp_path: Path) -> Non
     qtbot.addWidget(dialog)
     assert dialog.table.rowCount() == 8
     assert "这不是转文字模型" in dialog.details.toPlainText()
+    assert str(paths.models.resolve()) in dialog.status.text()
+    assert str((paths.models / "silero-vad-v6").resolve()) in dialog.details.toPlainText()
     dialog.table.selectRow(3)
     assert "modelscope.cn → hf-mirror.com → huggingface.co" in dialog.details.toPlainText()
 
@@ -73,6 +75,10 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     qtbot.addWidget(window)
     assert "当前：仅识别并导出原文字幕" == window.workflow_label.text()
     assert window.translation_toggle.isChecked() is False
+    toolbar_labels = [action.text() for action in window.toolbar.actions() if action.text()]
+    assert toolbar_labels == ["添加媒体", "导入文件夹", "开始识别", "导出字幕"]
+    menu_labels = [action.text() for action in window.menuBar().actions()]
+    assert menu_labels == ["项目", "处理", "设置", "帮助"]
     window.close()
 
 

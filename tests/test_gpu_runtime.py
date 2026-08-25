@@ -85,3 +85,18 @@ def test_green_runtime_download_is_verified_and_extracted(tmp_path: Path, monkey
     assert manager.is_installed()
     assert (manager.bin_dir / "cublas64_12.dll").read_bytes() == b"verified-dll"
     assert manager.manifest_path.is_file()
+
+
+def test_gpu_runtime_uses_domestic_mirrors_before_official_source() -> None:
+    artifact = gpu_runtime.RUNTIME_ARTIFACTS[0]
+    urls = gpu_runtime._runtime_download_urls(artifact)
+    assert urls[0].startswith("https://pypi.tuna.tsinghua.edu.cn/")
+    assert urls[1].startswith("https://mirrors.aliyun.com/pypi/")
+    assert urls[-1] == artifact.url
+
+
+def test_gpu_runtime_status_always_contains_absolute_directory(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    manager = GPURuntimeManager(paths)
+    assert str(manager.bin_dir.resolve()) in manager.status_text()
+    assert str(manager.bin_dir.resolve()) in manager.manual_install_text()

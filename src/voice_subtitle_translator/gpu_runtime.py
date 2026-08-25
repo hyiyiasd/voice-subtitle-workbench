@@ -91,6 +91,12 @@ class RuntimeArtifact:
     size_bytes: int
 
 
+PYPI_MIRROR_BASES = (
+    "https://pypi.tuna.tsinghua.edu.cn",
+    "https://mirrors.aliyun.com/pypi",
+)
+
+
 RUNTIME_ARTIFACTS = (
     RuntimeArtifact(
         name="nvidia-cublas-cu12-12.9.2.10",
@@ -151,9 +157,17 @@ class GPURuntimeManager:
         return all((self.bin_dir / name).is_file() for name in REQUIRED_DLLS)
 
     def status_text(self) -> str:
+        location = self.bin_dir.resolve()
         if self.is_installed():
-            return f"已安装：{self.bin_dir}"
-        return f"未安装：需下载约 {self.download_size / 1024**3:.2f} GB"
+            return f"已安装\n保存目录：{location}"
+        return (
+            f"未安装：需下载约 {self.download_size / 1024**3:.2f} GB\n"
+            f"保存目录：{location}"
+        )
+
+    def manual_install_text(self) -> str:
+        files = "、".join(sorted(REQUIRED_DLLS))
+        return f"如需手动放置，请将这些 DLL 复制到：\n{self.bin_dir.resolve()}\n\n{files}"
 
     def install(
         self,
@@ -175,19 +189,29 @@ class GPURuntimeManager:
         with httpx.Client(timeout=600, follow_redirects=True, trust_env=True) as client:
             for artifact in RUNTIME_ARTIFACTS:
                 wheel = self.paths.temp / f"{artifact.name}.whl.part"
-                wheel.unlink(missing_ok=True)
+                failures: list[str] = []
+                for download_url in _runtime_download_urls(artifact):
+                    wheel.unlink(missing_ok=True)
+                    try:
+                        with client.stream("GET", download_url) as response:
+                            response.raise_for_status()
+                            with wheel.open("wb") as output:
+                                for chunk in response.iter_bytes():
+                                    output.write(chunk)
+                                    if on_progress:
+                                        on_progress(completed + output.tell(), total)
+                        if wheel.stat().st_size != artifact.size_bytes:
+                            raise RuntimeError(f"GPU 运行库大小不符：{artifact.name}")
+                        if _file_sha256(wheel) != artifact.sha256:
+                            raise RuntimeError(f"GPU 运行库 SHA-256 不匹配：{artifact.name}")
+                        break
+                    except Exception as exc:
+                        wheel.unlink(missing_ok=True)
+                        failures.append(f"{_download_host(download_url)}：{exc}")
+                else:
+                    detail = "；".join(failures)
+                    raise RuntimeError(f"GPU 运行库所有下载通道均失败：{artifact.name}。{detail}")
                 try:
-                    with client.stream("GET", artifact.url) as response:
-                        response.raise_for_status()
-                        with wheel.open("wb") as output:
-                            for chunk in response.iter_bytes():
-                                output.write(chunk)
-                                if on_progress:
-                                    on_progress(completed + output.tell(), total)
-                    if wheel.stat().st_size != artifact.size_bytes:
-                        raise RuntimeError(f"GPU 运行库大小不符：{artifact.name}")
-                    if _file_sha256(wheel) != artifact.sha256:
-                        raise RuntimeError(f"GPU 运行库 SHA-256 不匹配：{artifact.name}")
                     with zipfile.ZipFile(wheel) as archive:
                         for member in archive.infolist():
                             name = PurePosixPath(member.filename).name
@@ -241,3 +265,17 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _runtime_download_urls(artifact: RuntimeArtifact) -> tuple[str, ...]:
+    marker = "files.pythonhosted.org/"
+    if marker not in artifact.url:
+        return (artifact.url,)
+    package_path = artifact.url.split(marker, 1)[1]
+    urls = [f"{base.rstrip('/')}/{package_path}" for base in PYPI_MIRROR_BASES]
+    urls.append(artifact.url)
+    return tuple(dict.fromkeys(urls))
+
+
+def _download_host(url: str) -> str:
+    return url.split("/", 3)[2] if "://" in url else url
