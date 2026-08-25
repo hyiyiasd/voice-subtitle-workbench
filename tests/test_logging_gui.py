@@ -142,6 +142,17 @@ def test_folder_media_wait_for_manual_operation_then_process_in_order(
         "等待选择操作",
         "等待选择操作",
     ]
+    first_progress = window.task_progress[media_files[0].resolve()]
+    assert first_progress.isHidden()
+    assert window.task_tree.isColumnHidden(1)
+    window._set_media_status(media_files[0], "正在识别", progress=50)
+    assert not first_progress.isHidden()
+    assert not window.task_tree.isColumnHidden(1)
+    window._set_media_status(
+        media_files[0], "识别完成", progress=100, show_progress=False
+    )
+    assert first_progress.isHidden()
+    assert window.task_tree.isColumnHidden(1)
     window._queue_operations(media_files, "transcribe")
     qtbot.waitUntil(lambda: len(processed) == 2)
     assert processed == [media.resolve() for media in media_files]
