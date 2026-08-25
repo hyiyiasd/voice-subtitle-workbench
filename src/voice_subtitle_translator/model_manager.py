@@ -34,6 +34,8 @@ class ManagedModel:
     descriptor: ModelDescriptor
     artifacts: tuple[ModelArtifact, ...]
     downloadable: bool
+    recommendation: str = ""
+    description: str = ""
     note: str = ""
 
 
@@ -65,6 +67,8 @@ class ModelManager:
                 descriptor=descriptor,
                 artifacts=artifacts,
                 downloadable=bool(value.get("downloadable", False)),
+                recommendation=value.get("recommendation", ""),
+                description=value.get("description", ""),
                 note=value.get("note", ""),
             )
         return result
@@ -111,7 +115,9 @@ class ModelManager:
         total_bytes = sum(artifact.size_bytes for artifact in model.artifacts)
         if on_progress:
             on_progress(0, total_bytes)
-        with httpx.Client(timeout=300, follow_redirects=True, trust_env=False) as client:
+        # Respect the user's HTTPS proxy when Hugging Face is not directly reachable.
+        # Offline mode still returns above before any client or request is created.
+        with httpx.Client(timeout=300, follow_redirects=True, trust_env=True) as client:
             for artifact in model.artifacts:
                 target = _safe_child(root, artifact.relative_path)
                 target.parent.mkdir(parents=True, exist_ok=True)

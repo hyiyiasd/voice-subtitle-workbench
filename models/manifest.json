@@ -13,6 +13,8 @@
       "recommended_vram_mb": 0,
       "runtime": "onnxruntime-cpu",
       "downloadable": true,
+      "recommendation": "所有识别模型必备；体积很小",
+      "description": "这不是转文字模型，而是语音活动检测（VAD）组件。它会先找出音频中真正有人说话的区间，跳过静音和大段背景声，再把语音切成适合识别的片段。这样可以减少无效计算，也能降低长静音诱发重复字幕或幻觉的概率。模型仅约 2.2 MB，使用 CPU 即可，安装任意识别模型时都建议同时安装它。",
       "artifacts": [
         {
           "url": "https://github.com/snakers4/silero-vad/raw/v6.2.1/src/silero_vad/data/silero_vad.onnx",
@@ -34,6 +36,8 @@
       "recommended_vram_mb": 0,
       "runtime": "sherpa-onnx",
       "downloadable": true,
+      "recommendation": "日语优先；CPU 轻量首选",
+      "description": "面向日语语音识别的专用 K2 Transducer 模型，使用 INT8 ONNX 权重，模型约 153 MB，不需要独立显卡。适合日语访谈、动画对白、广播和较清晰的单人语音；在普通 CPU 上通常比 Whisper 中大型模型更轻便。它的优势是日语专用和资源占用低，但跨语言、强噪声、复杂音乐背景以及日英频繁混说时，建议改用 Whisper small、medium 或 large-v3-turbo。",
       "artifacts": [
         {
           "url": "https://huggingface.co/reazon-research/reazonspeech-k2-v2/resolve/291488c8151be24d7da4bf7af26e533fad96e407/encoder-epoch-99-avg-1.int8.onnx",
@@ -74,7 +78,132 @@
       "runtime": "sherpa-onnx",
       "downloadable": false,
       "artifacts": [],
+      "recommendation": "日英混说预留；当前不可下载",
+      "description": "计划用于日语和英语混合语音的 ReazonSpeech K2 模型，目标是以较低的 CPU 和内存占用处理一句话中日英交替的内容。由于上游官方仓库目前不能稳定匿名访问，本项目没有改用来源不明的第三方镜像，也不会提供无法校验的权重；因此该条目仅用于说明兼容计划，当前不能自动下载或用于识别。",
       "note": "官方仓库当前无法匿名访问；为避免改用来源不明的镜像，暂时禁止自动下载。"
+    },
+    {
+      "id": "faster-whisper-tiny",
+      "display_name": "faster-whisper tiny（极速）",
+      "source": "https://huggingface.co/Systran/faster-whisper-tiny",
+      "version": "d90ca5fe260221311c53c58e660288d3deb8d356",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 78203619,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 1000,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "recommendation": "快速预览、低配置电脑、短音频",
+      "description": "Whisper 多语言系列中体积最小、速度最快的一档，总下载量约 75 MB。它支持日语、英语、中文等多种语言，可以在 CPU 上运行，非常适合先快速查看录音大意、测试软件流程或处理发音清晰的短音频。代价是识别精度和抗噪能力最低，遇到多人对话、背景音乐、专有名词或含糊发音时更容易漏字和听错，不建议作为重要字幕的最终结果。",
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny/resolve/d90ca5fe260221311c53c58e660288d3deb8d356/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1",
+          "size_bytes": 75538270
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny/resolve/d90ca5fe260221311c53c58e660288d3deb8d356/config.json",
+          "relative_path": "config.json",
+          "sha256": "a73a28cdfe1c43ccc7202fa333d1f89c202477271407ae9a7f19afa52039cac8",
+          "size_bytes": 2249
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny/resolve/d90ca5fe260221311c53c58e660288d3deb8d356/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "size_bytes": 2203239
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-tiny/resolve/d90ca5fe260221311c53c58e660288d3deb8d356/vocabulary.txt",
+          "relative_path": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "size_bytes": 459861
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper-base",
+      "display_name": "faster-whisper base（轻量）",
+      "source": "https://huggingface.co/Systran/faster-whisper-base",
+      "version": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 147882941,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 1200,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "recommendation": "轻量日常识别；比 tiny 更稳",
+      "description": "约 141 MB 的轻量多语言 Whisper 模型，在速度、体积和基础准确率之间比 tiny 更均衡。适合普通电脑、课堂录音、清晰访谈以及不想下载大型模型的用户；CPU int8 模式也能使用。它对一般句子和常见词汇通常比 tiny 稳定，但复杂日语口语、重叠说话、强背景声和精细时间轴仍可能不够理想，正式字幕建议至少尝试 small 并比较结果。",
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+          "size_bytes": 145217532
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/config.json",
+          "relative_path": "config.json",
+          "sha256": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
+          "size_bytes": 2309
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "size_bytes": 2203239
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-base/resolve/ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66/vocabulary.txt",
+          "relative_path": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "size_bytes": 459861
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper-small",
+      "display_name": "faster-whisper small（均衡推荐）",
+      "source": "https://huggingface.co/Systran/faster-whisper-small",
+      "version": "536b0662742c02347bc0e980a01041f333bce120",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 486212372,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 2000,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "recommendation": "多数用户首选；速度与精度均衡",
+      "description": "约 464 MB 的多语言 Whisper 模型，是轻量模型里更适合认真做字幕的一档。它比 tiny 和 base 更能应对自然语速、口语、省略、轻度噪声以及日英混合内容，同时仍明显小于 medium。RTX 3070 可轻松运行，CPU int8 也可以使用但速度会更慢。若没有明确偏好，建议先用 small；日语纯语音且追求轻量时，也可以与 ReazonSpeech K2 的结果比较。",
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "3e305921506d8872816023e4c273e75d2419fb89b24da97b4fe7bce14170d671",
+          "size_bytes": 483546902
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/config.json",
+          "relative_path": "config.json",
+          "sha256": "b55496ac7940a7ae47d2c01eab40edfd8701feec1229d9cce3b40014383fb828",
+          "size_bytes": 2370
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+          "size_bytes": 2203239
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-small/resolve/536b0662742c02347bc0e980a01041f333bce120/vocabulary.txt",
+          "relative_path": "vocabulary.txt",
+          "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+          "size_bytes": 459861
+        }
+      ]
     },
     {
       "id": "faster-whisper-medium",
@@ -88,6 +217,8 @@
       "recommended_vram_mb": 5000,
       "runtime": "ctranslate2",
       "downloadable": true,
+      "recommendation": "质量优先；复杂音频和正式字幕",
+      "description": "约 1.43 GB 的多语言 Whisper 中型模型，准确率、语言鲁棒性和抗噪能力通常明显强于 tiny、base 与 small。适合较长节目、多人访谈、背景音乐、复杂日语口语和需要后续翻译的正式字幕。RTX 3070 建议使用 CUDA int8_float16；CPU int8 也能运行，但处理长音频会更慢。它不是体积最小的选择，但在首版支持的通用模型中属于稳妥的质量档。",
       "artifacts": [
         {
           "url": "https://huggingface.co/Systran/faster-whisper-medium/resolve/4d9f76bb96174a5625e9ed85e89be563d98d528c/model.bin",
@@ -127,6 +258,8 @@
       "recommended_vram_mb": 4500,
       "runtime": "ctranslate2",
       "downloadable": true,
+      "recommendation": "GPU 高质量高速档；RTX 3070 推荐",
+      "description": "基于 Whisper large-v3-turbo 的 CTranslate2 多语言模型，总下载量约 1.51 GB。它面向在保持较高识别质量的同时提高推理速度，适合 RTX 3070 这类显卡处理长视频、复杂日语和多语言内容。相比 small 会占用更多显存和磁盘，但通常能提供更好的复杂语音表现；如果只用 CPU 或只是快速预览，优先选择 tiny、base 或 small。",
       "artifacts": [
         {
           "url": "https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo/resolve/0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf/model.bin",

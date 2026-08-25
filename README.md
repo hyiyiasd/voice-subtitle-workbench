@@ -66,13 +66,17 @@ CLI 的 `--translate/--no-translate` 必须放在子命令之前。省略时单�
 
 ## 模型与硬件
 
-- 日语默认：ReazonSpeech K2 日语模型。
-- 日英混合：ReazonSpeech K2 `ja-en`。
-- 英语：faster-whisper `medium`；可选 `large-v3-turbo`。
+- 日语轻量首选：ReazonSpeech K2 日语模型，约 153 MB，无需独立显卡。
+- 快速预览：faster-whisper `tiny`，约 75 MB，体积最小但准确率较低。
+- 低配置日常使用：faster-whisper `base`，约 141 MB。
+- 通用均衡推荐：faster-whisper `small`，约 464 MB。
+- 复杂音频和正式字幕：faster-whisper `medium`，约 1.43 GB。
+- RTX 3070 高质量高速档：faster-whisper `large-v3-turbo`，约 1.51 GB。
+- 日英混合 ReazonSpeech K2 `ja-en` 目前只保留兼容条目，上游恢复稳定访问前不开放下载。
 - RTX 3070 默认使用 `int8_float16`，CPU 降级使用 `int8`。
 - VAD、ASR、本地翻译和 GPU 运行包均按需安装，不进入 Git 或主 ZIP。
 
-模型管理器只接受包含固定来源、版本、大小、许可证和 SHA-256 的清单。Silero VAD、ReazonSpeech K2 日语版以及两个 faster-whisper 模型已经固定到具体上游修订，可通过 GUI 或 CLI 按需下载并逐文件校验。日英混合模型的官方匿名下载地址当前不可用，因此清单会安全地拒绝自动下载，不会改用来源不明的镜像。模型文件体积可超过 1.5 GB，下载前请查看模型管理器显示的大小。
+模型管理器只接受包含固定来源、版本、大小、许可证和 SHA-256 的清单。Silero VAD、ReazonSpeech K2 日语版以及五个 faster-whisper 模型已经固定到具体上游修订，可通过 GUI 或 CLI 按需下载并逐文件校验。模型列表提供简短推荐场景，选中后会显示更完整的语言、速度、精度、硬件需求和适用音频介绍。日英混合模型的官方匿名下载地址当前不可用，因此清单会安全地拒绝自动下载，不会改用来源不明的镜像。
 
 媒体音轨优先由便携版 FFmpeg 标准化；开发构建尚未提供经过供应链审计的 FFmpeg 时，会使用随 faster-whisper 安装的 PyAV 运行库解码常见音视频格式。
 

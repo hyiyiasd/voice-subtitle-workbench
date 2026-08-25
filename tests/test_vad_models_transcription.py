@@ -54,9 +54,7 @@ def test_vad_probability_ranges_apply_padding_and_merge() -> None:
         (4_800, 0.0),
         (6_400, 0.0),
     ]
-    assert vad._probabilities_to_ranges(values, 16_000, 8_000) == [
-        SpeechRange(50, 350)
-    ]
+    assert vad._probabilities_to_ranges(values, 16_000, 8_000) == [SpeechRange(50, 350)]
 
 
 def test_model_manager_verifies_size_and_sha(tmp_path: Path) -> None:
@@ -101,6 +99,26 @@ def test_model_manager_verifies_size_and_sha(tmp_path: Path) -> None:
     target.write_bytes(b"tampered!!")
     with pytest.raises(ModelIntegrityError):
         manager.verify("tiny")
+
+
+def test_bundled_manifest_has_descriptions_and_consistent_sizes(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    manifest = Path(__file__).parents[1] / "models" / "manifest.json"
+    manager = ModelManager(paths, manifest)
+    assert {
+        "faster-whisper-tiny",
+        "faster-whisper-base",
+        "faster-whisper-small",
+        "faster-whisper-medium",
+        "faster-whisper-large-v3-turbo",
+    }.issubset(manager.models)
+    for model in manager.models.values():
+        assert model.recommendation
+        assert len(model.description) >= 40
+        if model.artifacts:
+            assert model.descriptor.size_bytes == sum(
+                artifact.size_bytes for artifact in model.artifacts
+            )
 
 
 def test_transcription_saves_batch_and_removes_chunk(tmp_path: Path, monkeypatch) -> None:

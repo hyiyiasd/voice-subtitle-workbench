@@ -1,7 +1,12 @@
 from pathlib import Path
 
 from voice_subtitle_translator.gui.main_window import MainWindow
+from voice_subtitle_translator.gui.model_manager_dialog import (
+    ModelManagerDialog,
+    _format_size,
+)
 from voice_subtitle_translator.logging_utils import redact
+from voice_subtitle_translator.model_manager import ModelManager
 from voice_subtitle_translator.paths import AppPaths
 
 
@@ -26,6 +31,22 @@ def test_secrets_are_redacted() -> None:
     assert "sk-abcdefghijklmnop" not in value
 
 
+def test_model_size_uses_every_binary_unit() -> None:
+    assert _format_size(2_327_524) == "2.2 MB"
+    assert _format_size(160_372_200) == "152.9 MB"
+    assert _format_size(1_530_571_713) == "1.4 GB"
+
+
+def test_model_manager_shows_detailed_introduction(qtbot, tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure()
+    manifest = Path(__file__).parents[1] / "models" / "manifest.json"
+    dialog = ModelManagerDialog(ModelManager(paths, manifest), offline=False)
+    qtbot.addWidget(dialog)
+    assert dialog.table.rowCount() == 8
+    assert "这不是转文字模型" in dialog.details.toPlainText()
+
+
 def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     paths.ensure()
@@ -36,9 +57,7 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     window.close()
 
 
-def test_dropping_media_creates_green_project_and_starts_recognition(
-    qtbot, tmp_path: Path
-) -> None:
+def test_dropping_media_creates_green_project_and_starts_recognition(qtbot, tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     paths.ensure()
     media = tmp_path / "节目.mp3"

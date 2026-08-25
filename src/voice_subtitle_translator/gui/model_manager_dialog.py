@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QDialog,
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QVBoxLayout,
 )
 
@@ -46,15 +49,22 @@ class ModelManagerDialog(QDialog):
         self.offline = offline
         self.download_thread: ModelDownloadThread | None = None
         self.setWindowTitle("模型管理器")
-        self.resize(900, 430)
+        self.resize(1080, 650)
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["模型", "语言", "大小", "许可证", "预计显存", "状态", "说明"]
+            ["模型", "语言", "大小", "许可证", "预计显存", "状态", "推荐场景"]
         )
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.currentCellChanged.connect(self._show_details)
+
+        details_title = QLabel("模型介绍")
+        details_title.setStyleSheet("font-size: 15px; font-weight: 600")
+        self.details = QTextBrowser()
+        self.details.setOpenExternalLinks(True)
+        self.details.setMinimumHeight(150)
 
         self.status = QLabel("离线模式：禁止下载" if offline else "模型保存于程序旁 data\\models")
         self.progress_bar = QProgressBar()
@@ -75,6 +85,8 @@ class ModelManagerDialog(QDialog):
         buttons.addWidget(self.close_button)
         layout = QVBoxLayout(self)
         layout.addWidget(self.table)
+        layout.addWidget(details_title)
+        layout.addWidget(self.details)
         layout.addLayout(buttons)
         self._refresh()
 
@@ -87,18 +99,49 @@ class ModelManagerDialog(QDialog):
             status = "已安装" if self.manager.is_installed(descriptor.id) else "未安装"
             values = [
                 descriptor.display_name,
-                "/".join(descriptor.languages),
-                _format_size(descriptor.size_bytes),
+                _format_languages(descriptor.languages),
+                _format_size(descriptor.size_bytes) if descriptor.size_bytes else "暂未公布",
                 descriptor.license,
-                f"约 {descriptor.recommended_vram_mb} MB",
+                (
+                    f"约 {descriptor.recommended_vram_mb} MB"
+                    if descriptor.recommended_vram_mb
+                    else "无需独显"
+                ),
                 status,
-                model.note,
+                model.recommendation or model.note,
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setData(256, descriptor.id)
+                item.setToolTip(model.description or model.note)
                 self.table.setItem(row, column, item)
         self.table.resizeColumnsToContents()
+        if self.table.rowCount():
+            self.table.selectRow(0)
+            self._show_details(0, 0, -1, -1)
+
+    def _show_details(
+        self, current_row: int, _current_column: int, _previous_row: int, _previous_column: int
+    ) -> None:
+        if current_row < 0 or not self.table.item(current_row, 0):
+            self.details.clear()
+            return
+        model_id = str(self.table.item(current_row, 0).data(256))
+        model = self.manager.models[model_id]
+        descriptor = model.descriptor
+        availability = "可自动下载" if model.downloadable else "暂不提供自动下载"
+        note = f"<p><b>注意：</b>{escape(model.note)}</p>" if model.note else ""
+        source = escape(descriptor.source)
+        self.details.setHtml(
+            f"<h3>{escape(descriptor.display_name)}</h3>"
+            f"<p>{escape(model.description or '暂无详细介绍。')}</p>"
+            f"<p><b>推荐场景：</b>{escape(model.recommendation or '未指定')}<br>"
+            f"<b>语言：</b>{escape(_format_languages(descriptor.languages))}　"
+            f"<b>运行时：</b>{escape(descriptor.runtime)}　"
+            f"<b>下载：</b>{availability}<br>"
+            f'<b>来源：</b><a href="{source}">{source}</a></p>'
+            f"{note}"
+        )
 
     def _selected_model_id(self) -> str | None:
         row = self.table.currentRow()
@@ -162,8 +205,13 @@ class ModelManagerDialog(QDialog):
 
 def _format_size(size_bytes: int) -> str:
     value = float(size_bytes)
-    for suffix in ("B", "MB", "GB"):
-        if value < 1024 or suffix == "GB":
+    for suffix in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or suffix == "TB":
             return f"{value:.1f} {suffix}"
         value /= 1024
     return f"{size_bytes} B"
+
+
+def _format_languages(languages: tuple[str, ...]) -> str:
+    names = {"multilingual": "多语言", "ja": "日语", "en": "英语"}
+    return "/".join(names.get(language, language) for language in languages)
