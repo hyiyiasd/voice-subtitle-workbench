@@ -4,7 +4,7 @@ Windows 优先、简体中文、解压即用的字幕工作台。项目采用 MI
 
 官方仓库：https://github.com/hyiyiasd/voice-subtitle-workbench
 
-当前版本：`0.1.0` 开发阶段。项目系统、字幕编辑、质量检查、原文/译文导出和 OpenAI-compatible 翻译闭环已经进入实现；ASR 模型和 GPU 运行包不会随源码或主程序 ZIP 分发，必须通过经过 SHA-256 校验的模型清单按需安装。
+当前版本：`0.1.0` 开发阶段。媒体识别为原文 SRT、原文 SRT 翻译为中文 SRT、字幕编辑和质量检查已经形成闭环；ASR 模型和 GPU 运行包不会随源码或主程序 ZIP 分发，必须通过经过 SHA-256 校验的模型清单按需安装。
 
 ## 主要能力
 
@@ -13,8 +13,8 @@ Windows 优先、简体中文、解压即用的字幕工作台。项目采用 MI
 - 文件夹和媒体提供复选框，支持整组全选/取消后再排除单个文件；“批量操作”可对所选文件执行转文字或翻译。
 - 右键媒体可单独转文字、翻译或查看详情；双击会切换媒体，并在中央紧凑详情区显示处理阶段和进度。
 - SoVITS 改配音仅在任务菜单中标记为“暂未实现”，不注册实现，也不引入相关依赖。
-- 单文件 `.vstproj` SQLite 项目，保存字幕、译文、修订、任务状态、缓存、提示词和术语。
-- 两种明确工作流：仅语音识别，以及识别后翻译为简体中文。
+- GUI 不显示项目文件概念。识别完成立即生成原文 SRT；用户确认后再选择原文 SRT 生成中文 SRT。
+- 恢复游标、缓存和修订只保存在 `data/state/*.sqlite3` 内部状态中，不需要用户打开或管理。
 - 翻译首次默认关闭；关闭时不创建翻译 Provider、不读取 API Key、不发起翻译请求。
 - 日语、英语和日英混合 ASR Provider 接口；支持 ReazonSpeech K2 与 faster-whisper 的本地实现。
 - OpenAI 原生结构化输出，以及 DeepSeek、智谱、Ollama、LM Studio 和自定义 OpenAI-compatible 服务。
@@ -34,10 +34,10 @@ data/
   logs/
   temp/
   gpu-runtime/
-  projects/       # 拖入媒体时自动创建的项目
+  state/          # 软件内部恢复与缓存状态，不需要用户操作
   subtitles/
     原文/          # 与媒体同名的原文 SRT
-    译文/          # 与媒体同名的译文 SRT
+    中文/          # 与原文 SRT 同名的中文 SRT
     双语/          # 与媒体同名的双语 SRT
 ```
 
@@ -56,19 +56,14 @@ data/
 
 ## CLI
 
+当前版本以 GUI 的两步 SRT 工作流为主。CLI 暂时只公开模型检查和下载命令；内部状态调试命令不作为用户工作流。
+
 ```powershell
 . .\scripts\env.ps1
-uv run --no-sync voice-subtitle-translator create demo.vstproj --media sample.mp4
-uv run --no-sync voice-subtitle-translator add-segment demo.vstproj --start-ms 0 --end-ms 2500 --text "こんにちは"
-uv run --no-sync voice-subtitle-translator export demo.vstproj demo.srt --format srt --content source
-uv run --no-sync voice-subtitle-translator info demo.vstproj
 uv run --no-sync voice-subtitle-translator models list
 uv run --no-sync voice-subtitle-translator models download silero-vad-v6
 uv run --no-sync voice-subtitle-translator models download reazonspeech-k2-ja
-uv run --no-sync voice-subtitle-translator transcribe demo.vstproj --model reazonspeech-k2-ja
 ```
-
-CLI 的 `--translate/--no-translate` 必须放在子命令之前。省略时单次 CLI 调用默认不翻译。`--offline` 会禁止远程 Provider，并设置模型库离线环境。
 
 便携 ZIP 中可直接使用 `vst-cli.exe` 执行同样的命令，无需安装 Python。
 
@@ -106,7 +101,9 @@ GPU 设置可按需下载 NVIDIA 官方 CUDA 12.9、cuBLAS 12.9 和 cuDNN 9.24 �
 
 在 GUI 的“翻译服务设置”中可选择 OpenAI、DeepSeek、智谱、Ollama、LM Studio 或自定义 OpenAI-compatible 服务。设置页可以输入一句测试内容并真实调用接口，成功时弹窗显示模型输出，失败时显示 HTTP 状态和服务返回原因。DeepSeek 默认使用 `https://api.deepseek.com` 和 `deepseek-v4-flash`。
 
-媒体加入任务树后不会自动处理。手动选择“转文字”或批量操作；勾选“启用翻译”后，识别完成会继续翻译，未勾选时只执行识别且不读取 API Key。任务异常时可点击“强制暂停”终止当前模型/API 请求并清空尚未开始的队列。
+媒体加入任务树后不会自动处理。第一步手动选择“转文字”，完成后固定生成原文 SRT，不会自动调用翻译 API；第二步点击“翻译原文 SRT”，软件重新读取 SRT 并生成同名中文 SRT。任务异常时可点击“强制暂停”终止当前模型/API 请求并清空尚未开始的队列。
+
+DeepSeek 字幕翻译默认关闭思考模式并启用 JSON 输出，避免普通翻译批次进行不必要的高强度推理。
 
 API Key 不写入项目、配置或日志，只保存在 Windows 凭据管理器。Token 和费用信息均为估算，实际账单以服务商为准。
 
@@ -115,7 +112,8 @@ API Key 不写入项目、配置或日志，只保存在 Windows 凭据管理器
 ```text
 PySide6 GUI / CLI
         │
-        ├── Project service ── .vstproj SQLite（唯一写入者）
+        ├── SRT workflow ── 原文 SRT → 中文 SRT
+        ├── Internal state ── data/state/*.sqlite3（恢复与缓存）
         │
         └── Pipeline coordinator
                  ├── VAD worker

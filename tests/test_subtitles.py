@@ -9,6 +9,7 @@ from voice_subtitle_translator.subtitles import (
     ExportFormat,
     TranslationUnavailableError,
     export_subtitles,
+    parse_srt,
     render_ass,
     render_srt,
     render_vtt,
@@ -36,6 +37,19 @@ def test_srt_has_stable_sequence_and_timestamp() -> None:
     assert "2\n00:00:04,000 --> 00:00:05,500\n世界" in rendered
 
 
+def test_exported_srt_can_be_loaded_as_translation_source(tmp_path: Path) -> None:
+    path = tmp_path / "原文.srt"
+    export_subtitles(
+        _segments(), path, output_format=ExportFormat.SRT, content=ExportContent.SOURCE
+    )
+    loaded = parse_srt(path, language="ja")
+    assert [(item.start_ms, item.end_ms, item.source_text) for item in loaded] == [
+        (1_234, 3_456, "こんにちは"),
+        (4_000, 5_500, "世界"),
+    ]
+    assert all(item.language == "ja" for item in loaded)
+
+
 def test_vtt_and_ass_render() -> None:
     segments = _segments()
     assert render_vtt(segments, ExportContent.SOURCE).startswith("WEBVTT")
@@ -61,4 +75,3 @@ def test_json_source_export_does_not_add_translation(tmp_path: Path) -> None:
     )
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
     assert "translation" not in payload[0]
-

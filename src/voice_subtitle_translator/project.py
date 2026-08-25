@@ -132,6 +132,15 @@ class Project(AbstractContextManager["Project"]):
         target = Path(path).resolve()
         if target.suffix.lower() != ".vstproj":
             target = target.with_suffix(".vstproj")
+        return cls._create_at(target, settings)
+
+    @classmethod
+    def create_state(cls, path: str | Path, settings: ProjectSettings | None = None) -> Project:
+        """Create an internal SQLite state file without exposing .vstproj semantics."""
+        return cls._create_at(Path(path).resolve(), settings)
+
+    @classmethod
+    def _create_at(cls, target: Path, settings: ProjectSettings | None) -> Project:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             raise FileExistsError(target)
@@ -156,7 +165,7 @@ class Project(AbstractContextManager["Project"]):
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if app_id != APPLICATION_ID or version > SCHEMA_VERSION:
             connection.close()
-            raise InvalidProjectError(f"不是受支持的 .vstproj 项目：{target}")
+            raise InvalidProjectError(f"不是受支持的字幕工作状态文件：{target}")
         project._configure_connection()
         project.recover_interrupted_tasks()
         return project
@@ -189,6 +198,20 @@ class Project(AbstractContextManager["Project"]):
     def close(self) -> None:
         self.connection.commit()
         self.connection.close()
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """INSERT INTO project_meta(key, value) VALUES(?, ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (key, value),
+            )
+
+    def get_meta(self, key: str, default: str = "") -> str:
+        row = self.connection.execute(
+            "SELECT value FROM project_meta WHERE key=?", (key,)
+        ).fetchone()
+        return default if row is None else str(row[0])
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         if exc_type is None:
@@ -247,6 +270,42 @@ class Project(AbstractContextManager["Project"]):
         with self.connection:
             self._insert_segment(segment)
             self._save_revision(segment, reason)
+
+    def replace_all_segments(self, segments: Iterable[Segment], *, reason: str) -> None:
+        """Replace the editable timeline while retaining provider caches and task history."""
+        values = list(segments)
+        with self.connection:
+            self.connection.execute("DELETE FROM segments")
+            for order_key, segment in enumerate(values):
+                segment.order_key = order_key
+                self._insert_segment(segment)
+                self._save_revision(segment, reason)
+
+    def resequence_segments_by_time(self) -> None:
+        rows = self.connection.execute(
+            "SELECT id FROM segments ORDER BY start_ms, end_ms, order_key, id"
+        ).fetchall()
+        with self.connection:
+            for order_key, row in enumerate(rows):
+                self.connection.execute(
+                    "UPDATE segments SET order_key=? WHERE id=?", (order_key, row["id"])
+                )
+
+    def has_timeline_regressions(self) -> bool:
+        starts = [segment.start_ms for segment in self.list_segments()]
+        return any(
+            current < previous
+            for previous, current in zip(starts, starts[1:], strict=False)
+        )
+
+    def discard_unlocked_segments(self) -> int:
+        count = self.connection.execute(
+            "SELECT COUNT(*) FROM segments WHERE human_locked=0"
+        ).fetchone()[0]
+        with self.connection:
+            self.connection.execute("DELETE FROM segments WHERE human_locked=0")
+        self.resequence_segments_by_time()
+        return int(count)
 
     def add_segments(self, segments: Iterable[Segment], *, reason: str = "create") -> None:
         with self.connection:

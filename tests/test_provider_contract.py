@@ -108,3 +108,37 @@ def test_provider_http_error_includes_safe_response_body() -> None:
     )
     with pytest.raises(ProviderRequestError, match=r"(?s)HTTP 401.*invalid key"):
         provider.test_connection(text="你好", model="mock")
+
+
+def test_deepseek_translation_disables_thinking_and_requests_json() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {"translations": [{"id": "a", "text": "你好"}]}
+                            )
+                        }
+                    }
+                ]
+            },
+        )
+
+    client = httpx.Client(
+        base_url="https://api.deepseek.com", transport=httpx.MockTransport(handler)
+    )
+    provider = OpenAICompatibleProvider(
+        ProviderConfig(id="deepseek", base_url="https://api.deepseek.com"),
+        client=client,
+    )
+    provider.translate(
+        [TranslationItem("a", "こんにちは")], target_language="zh-Hans", model="deepseek-v4-flash"
+    )
+    assert captured["thinking"] == {"type": "disabled"}
+    assert captured["response_format"] == {"type": "json_object"}

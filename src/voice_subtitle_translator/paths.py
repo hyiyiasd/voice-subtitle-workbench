@@ -52,7 +52,9 @@ class AppPaths:
             self.logs,
             self.temp,
             self.gpu_runtime,
+            self.data / "state",
             self.data / "subtitles" / "原文",
+            self.data / "subtitles" / "中文",
             self.data / "subtitles" / "译文",
             self.data / "subtitles" / "双语",
         ):

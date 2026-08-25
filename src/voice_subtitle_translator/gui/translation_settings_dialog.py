@@ -34,7 +34,7 @@ class TranslationServiceSettings:
 
 PRESETS = [
     ("OpenAI", "openai", "https://api.openai.com/v1", "gpt-4.1-mini", True),
-    ("DeepSeek", "deepseek", "https://api.deepseek.com", "deepseek-v4-flash", False),
+    ("DeepSeek", "deepseek", "https://api.deepseek.com", "deepseek-v4-flash", True),
     ("智谱 GLM", "zhipu", "https://open.bigmodel.cn/api/paas/v4", "glm-4-flash", False),
     ("Ollama（本地）", "ollama", "http://127.0.0.1:11434/v1", "", False),
     ("LM Studio（本地）", "lm-studio", "http://127.0.0.1:1234/v1", "", False),

@@ -14,9 +14,11 @@ $portableRoot = Join-Path $ProjectRoot "dist\voice-subtitle-translator"
 $subtitleSource = [string][char]0x539F + [char]0x6587
 $subtitleTranslation = [string][char]0x8BD1 + [char]0x6587
 $subtitleBilingual = [string][char]0x53CC + [char]0x8BED
+$subtitleChinese = [string][char]0x4E2D + [char]0x6587
 foreach ($directory in @(
-    "config", "models", "cache", "logs", "temp", "gpu-runtime", "projects",
-    "subtitles\$subtitleSource", "subtitles\$subtitleTranslation", "subtitles\$subtitleBilingual"
+    "config", "models", "cache", "logs", "temp", "gpu-runtime", "state",
+    "subtitles\$subtitleSource", "subtitles\$subtitleChinese",
+    "subtitles\$subtitleTranslation", "subtitles\$subtitleBilingual"
 )) {
     New-Item -ItemType Directory -Force -Path (Join-Path $portableRoot "data\$directory") | Out-Null
 }

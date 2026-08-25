@@ -145,9 +145,19 @@ class TranscriptionService:
                     candidates = [
                         ASRCandidate(**candidate) for candidate in response["candidates"]
                     ]
+                    replace_ids = [
+                        segment.id
+                        for segment in self.project.list_segments()
+                        if min(segment.end_ms, speech_range.end_ms)
+                        > max(segment.start_ms, speech_range.start_ms)
+                    ]
                     created = self.project.apply_asr_candidates(
-                        candidates, provider=provider_type, model=model_id
+                        candidates,
+                        provider=provider_type,
+                        model=model_id,
+                        replace_segment_ids=replace_ids,
                     )
+                    self.project.resequence_segments_by_time()
                     self.project.complete_batch(
                         task_id,
                         index,

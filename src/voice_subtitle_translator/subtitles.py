@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from enum import StrEnum
 from pathlib import Path
 
@@ -23,6 +24,54 @@ class ExportFormat(StrEnum):
 
 class TranslationUnavailableError(ValueError):
     pass
+
+
+class InvalidSubtitleError(ValueError):
+    pass
+
+
+_SRT_TIME_RE = re.compile(
+    r"^(\d{1,3}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*"
+    r"(\d{1,3}):(\d{2}):(\d{2})[,.](\d{3})(?:\s+.*)?$"
+)
+
+
+def parse_srt(path: str | Path, *, language: str = "auto") -> list[Segment]:
+    """Load a standard SRT as editable source segments."""
+    source = Path(path)
+    raw = source.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
+    blocks = re.split(r"\n\s*\n", raw.strip()) if raw.strip() else []
+    segments: list[Segment] = []
+    for block_number, block in enumerate(blocks, 1):
+        lines = block.splitlines()
+        timing_index = next((i for i, line in enumerate(lines) if "-->" in line), -1)
+        if timing_index < 0:
+            raise InvalidSubtitleError(f"SRT 第 {block_number} 段缺少时间轴。")
+        match = _SRT_TIME_RE.match(lines[timing_index].strip())
+        if not match:
+            raise InvalidSubtitleError(
+                f"SRT 第 {block_number} 段时间轴格式不正确：{lines[timing_index]}"
+            )
+        values = [int(value) for value in match.groups()]
+        start_ms = _parts_to_milliseconds(*values[:4])
+        end_ms = _parts_to_milliseconds(*values[4:])
+        text = "\n".join(lines[timing_index + 1 :]).strip()
+        if end_ms <= start_ms or not text:
+            raise InvalidSubtitleError(f"SRT 第 {block_number} 段为空或结束时间无效。")
+        segments.append(
+            Segment(
+                order_key=len(segments),
+                start_ms=start_ms,
+                end_ms=end_ms,
+                source_text=text,
+                language=language,
+            )
+        )
+    return segments
+
+
+def _parts_to_milliseconds(hours: int, minutes: int, seconds: int, millis: int) -> int:
+    return ((hours * 60 + minutes) * 60 + seconds) * 1000 + millis
 
 
 def can_export(segments: list[Segment], content: ExportContent) -> tuple[bool, str]:

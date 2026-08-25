@@ -70,7 +70,9 @@ class OpenAICompatibleProvider:
             style_instruction=style_instruction,
         )
         body: dict = {"model": model, "messages": messages, "temperature": 0}
-        if self.config.structured_output:
+        if self.config.id == "deepseek":
+            body["thinking"] = {"type": "disabled"}
+        if self.config.structured_output or self.config.id == "deepseek":
             body["response_format"] = {"type": "json_object"}
         payload = self._post_chat(body)
         raw = payload["choices"][0]["message"]["content"]
@@ -91,6 +93,8 @@ class OpenAICompatibleProvider:
             ],
             "temperature": 0,
         }
+        if self.config.id == "deepseek":
+            body["thinking"] = {"type": "disabled"}
         payload = self._post_chat(body)
         try:
             content = payload["choices"][0]["message"]["content"]

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from voice_subtitle_translator.domain import ProjectSettings
+from voice_subtitle_translator.domain import ProjectSettings, Segment
 from voice_subtitle_translator.media import SpeechRange
 from voice_subtitle_translator.model_manager import (
     ModelIntegrityError,
@@ -216,6 +216,12 @@ def test_transcription_saves_batch_and_removes_chunk(tmp_path: Path, monkeypatch
 
     with Project.create(project_path, ProjectSettings()) as project:
         project.set_media(media)
+        project.add_segment(
+            Segment(order_key=0, start_ms=100, end_ms=800, source_text="旧识别一")
+        )
+        project.add_segment(
+            Segment(order_key=1, start_ms=100, end_ms=800, source_text="旧识别二")
+        )
         progress: list[tuple[str, int, int]] = []
         task_id = TranscriptionService(
             project,

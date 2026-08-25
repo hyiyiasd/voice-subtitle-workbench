@@ -15,6 +15,8 @@ from voice_subtitle_translator.gui.model_manager_dialog import (
 from voice_subtitle_translator.logging_utils import redact
 from voice_subtitle_translator.model_manager import ModelManager
 from voice_subtitle_translator.paths import AppPaths
+from voice_subtitle_translator.project import Project, quick_file_fingerprint
+from voice_subtitle_translator.subtitles import ExportContent, parse_srt
 
 
 def _paths(root: Path) -> AppPaths:
@@ -78,7 +80,7 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     paths.ensure()
     window = MainWindow(paths)
     qtbot.addWidget(window)
-    assert "当前：仅识别并导出原文字幕" == window.workflow_label.text()
+    assert "当前：第一步仅生成原文 SRT" == window.workflow_label.text()
     assert window.translation_toggle.isChecked() is False
     toolbar_labels = [action.text() for action in window.toolbar.actions() if action.text()]
     assert toolbar_labels == [
@@ -86,11 +88,12 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
         "导入文件夹",
         "批量操作…",
         "开始识别",
+        "翻译原文 SRT",
         "强制暂停",
         "导出字幕",
     ]
     menu_labels = [action.text() for action in window.menuBar().actions()]
-    assert menu_labels == ["项目", "处理", "设置", "窗口", "帮助"]
+    assert menu_labels == ["文件", "处理", "设置", "窗口", "帮助"]
     assert window.task_tree.columnCount() == 1
     assert window.task_dock.toggleViewAction().text() == "任务队列"
     assert window.side_dock.toggleViewAction().text() == "翻译上下文"
@@ -111,7 +114,8 @@ def test_dropping_media_creates_green_project_and_starts_recognition(qtbot, tmp_
     qtbot.waitUntil(lambda: bool(calls))
     assert calls == [True]
     assert window.project is not None
-    assert window.project.path.parent == paths.data / "projects"
+    assert window.project.path.parent == paths.data / "state"
+    assert window.project.path.suffix == ".sqlite3"
     assert window.project.resolve_media() == media.resolve()
     window.close()
 
@@ -167,6 +171,77 @@ def test_folder_media_wait_for_manual_operation_then_process_in_order(
         child = group.child(index)
         assert child.checkState(0) == Qt.CheckState.Checked
         assert child.icon(0).isNull()
+    window.close()
+
+
+def test_gui_writes_source_srt_without_exposing_project_file(qtbot, tmp_path: Path) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    media = tmp_path / "节目.mp3"
+    media.write_bytes(b"owned-media")
+    state = paths.data / "state" / "internal.sqlite3"
+    project = Project.create_state(state)
+    project.set_media(media)
+    project.add_segment(
+        Segment(order_key=0, start_ms=1_000, end_ms=2_500, source_text="こんにちは")
+    )
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    window._set_project(project)
+    output = window._write_current_srt(ExportContent.SOURCE)
+    assert output == (paths.data / "subtitles" / "原文" / "节目.srt").resolve()
+    assert parse_srt(output)[0].source_text == "こんにちは"
+    assert project.path.suffix == ".sqlite3"
+    window.close()
+
+
+def test_enabling_translation_waits_for_explicit_second_step(qtbot, tmp_path: Path) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    project = Project.create_state(paths.data / "state" / "internal.sqlite3")
+    project.add_segment(
+        Segment(order_key=0, start_ms=1_000, end_ms=2_500, source_text="こんにちは")
+    )
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    window._set_project(project)
+    calls: list[bool] = []
+    window.translate_pending = lambda: calls.append(True)  # type: ignore[method-assign]
+    window.translation_toggle.setChecked(True)
+    qtbot.wait(20)
+    assert calls == []
+    assert project.get_settings().translation_enabled is True
+    window.close()
+
+
+def test_legacy_project_migration_keeps_backup_and_discards_duplicate_timeline(
+    qtbot, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    media = tmp_path / "episode.mp3"
+    media.write_bytes(b"owned-media")
+    fingerprint = quick_file_fingerprint(media)
+    legacy = paths.data / "projects" / f"episode-{fingerprint[:12]}.vstproj"
+    with Project.create(legacy) as project:
+        project.set_media(media)
+        project.add_segment(
+            Segment(order_key=0, start_ms=1_000, end_ms=2_000, source_text="first")
+        )
+        project.add_segment(
+            Segment(order_key=1, start_ms=5_000, end_ms=6_000, source_text="end")
+        )
+        project.add_segment(
+            Segment(order_key=2, start_ms=1_000, end_ms=2_000, source_text="duplicate")
+        )
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    assert window._load_media_project(media)
+    assert window.project is not None
+    assert window.project.path.parent == paths.data / "state"
+    assert window.project.list_segments() == []
+    assert window.project.get_meta("source_srt_invalid") == "1"
+    assert legacy.is_file()
     window.close()
 
 
