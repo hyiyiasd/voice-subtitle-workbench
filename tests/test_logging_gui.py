@@ -87,7 +87,9 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
         "导出字幕",
     ]
     menu_labels = [action.text() for action in window.menuBar().actions()]
-    assert menu_labels == ["项目", "处理", "设置", "帮助"]
+    assert menu_labels == ["项目", "处理", "设置", "窗口", "帮助"]
+    assert window.task_dock.toggleViewAction().text() == "任务队列"
+    assert window.side_dock.toggleViewAction().text() == "翻译上下文"
     assert not hasattr(window, "detail_log")
     window.close()
 
@@ -110,7 +112,9 @@ def test_dropping_media_creates_green_project_and_starts_recognition(qtbot, tmp_
     window.close()
 
 
-def test_folder_media_are_grouped_and_processed_in_order(qtbot, tmp_path: Path) -> None:
+def test_folder_media_wait_for_manual_operation_then_process_in_order(
+    qtbot, tmp_path: Path
+) -> None:
     paths = _paths(tmp_path / "portable")
     paths.ensure()
     media_root = tmp_path / "节目文件夹"
@@ -128,10 +132,17 @@ def test_folder_media_are_grouped_and_processed_in_order(qtbot, tmp_path: Path) 
 
     window._ingest_media = finish_immediately  # type: ignore[method-assign]
     window._enqueue_media_files(media_files, media_root)
+    qtbot.wait(20)
+    assert processed == []
+    group = window.task_tree.topLevelItem(0)
+    assert [group.child(index).text(1) for index in range(2)] == [
+        "等待选择操作",
+        "等待选择操作",
+    ]
+    window._queue_operations(media_files, "transcribe")
     qtbot.waitUntil(lambda: len(processed) == 2)
     assert processed == [media.resolve() for media in media_files]
     assert window.task_tree.topLevelItemCount() == 1
-    group = window.task_tree.topLevelItem(0)
     assert group.childCount() == 2
     assert [group.child(index).text(1) for index in range(2)] == ["已完成", "已完成"]
     assert group.checkState(0) == Qt.CheckState.Checked
