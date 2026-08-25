@@ -22,7 +22,20 @@ New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "artifacts") |
 $version = (uv run --no-sync python -c "from voice_subtitle_translator import __version__; print(__version__)")
 if ($LASTEXITCODE -ne 0) { throw "读取版本号失败，退出码：$LASTEXITCODE" }
 $zip = Join-Path $ProjectRoot "artifacts\voice-subtitle-translator-$version-windows-x64.zip"
-Compress-Archive -Path (Join-Path $ProjectRoot "dist\voice-subtitle-translator\*") -DestinationPath $zip -Force
+$archiveCreated = $false
+for ($attempt = 1; $attempt -le 5; $attempt++) {
+    try {
+        Compress-Archive -Path (Join-Path $ProjectRoot "dist\voice-subtitle-translator\*") -DestinationPath $zip -Force
+        $archiveCreated = $true
+        break
+    }
+    catch {
+        if ($attempt -eq 5) { throw }
+        Write-Warning "ZIP is temporarily locked; retrying in 2 seconds ($attempt/5)."
+        Start-Sleep -Seconds 2
+    }
+}
+if (-not $archiveCreated) { throw "Failed to create the portable ZIP." }
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
 Set-Content -LiteralPath "$zip.sha256" -Value "$hash  $(Split-Path -Leaf $zip)" -Encoding ascii
 Write-Output $zip

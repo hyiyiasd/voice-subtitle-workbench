@@ -5,6 +5,7 @@ import json
 import wave
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from voice_subtitle_translator.domain import ProjectSettings
@@ -59,6 +60,27 @@ def test_vad_probability_ranges_apply_padding_and_merge() -> None:
         (6_400, 0.0),
     ]
     assert vad._probabilities_to_ranges(values, 16_000, 8_000) == [SpeechRange(50, 350)]
+
+
+def test_vad_adds_required_audio_context(tmp_path: Path) -> None:
+    wav_path = tmp_path / "speech.wav"
+    _write_silence(wav_path, duration_ms=100)
+
+    class FakeSession:
+        input_shapes: list[tuple[int, ...]] = []
+
+        def run(self, _outputs, inputs):
+            self.input_shapes.append(inputs["input"].shape)
+            return np.asarray([[0.9]], dtype=np.float32), inputs["state"]
+
+    vad = object.__new__(SileroVAD)
+    vad.session = FakeSession()
+    vad.threshold = 0.5
+    vad.min_speech_ms = 10
+    vad.min_silence_ms = 10
+    vad.speech_pad_ms = 0
+    assert vad.speech_ranges(wav_path)
+    assert set(vad.session.input_shapes) == {(1, 576)}
 
 
 def test_model_manager_verifies_size_and_sha(tmp_path: Path) -> None:

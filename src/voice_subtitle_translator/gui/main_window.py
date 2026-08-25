@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import deque
 from pathlib import Path
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QThread, QTimer, QUrl, Signal
@@ -11,7 +12,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QLabel,
-    QListWidget,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QTableView,
     QTabWidget,
     QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -64,6 +66,7 @@ MEDIA_SUFFIXES = {
     ".avi",
     ".webm",
 }
+TASK_PATH_ROLE = int(Qt.ItemDataRole.UserRole)
 
 
 class SegmentTableModel(QAbstractTableModel):
@@ -239,6 +242,11 @@ class MainWindow(QMainWindow):
         self.project: Project | None = None
         self.translation_thread: TranslationThread | None = None
         self.transcription_thread: TranscriptionThread | None = None
+        self.pending_media: deque[Path] = deque()
+        self.queued_media: set[Path] = set()
+        self.current_media_path: Path | None = None
+        self.task_groups: dict[Path, QTreeWidgetItem] = {}
+        self.task_items: dict[Path, QTreeWidgetItem] = {}
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.resize(1280, 820)
         self.setAcceptDrops(True)
@@ -292,12 +300,11 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         self.drop_hint = QLabel(
-            "将 MP3、WAV、MP4 等音视频拖到这里，程序会自动识别；启用翻译后会继续翻译"
+            "将 MP3、WAV、MP4 等音视频或整个文件夹拖到这里；启用翻译后会在识别完成后继续翻译"
         )
         self.drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_hint.setStyleSheet(
-            "padding:12px;border:2px dashed #7a8aa0;border-radius:6px;"
-            "font-size:15px;color:#405060"
+            "padding:12px;border:2px dashed #7a8aa0;border-radius:6px;font-size:15px;color:#405060"
         )
         layout.addWidget(self.drop_hint)
         layout.addWidget(splitter)
@@ -305,8 +312,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         task_dock = QDockWidget("任务队列", self)
-        self.task_list = QListWidget()
-        task_dock.setWidget(self.task_list)
+        self.task_tree = QTreeWidget()
+        self.task_tree.setHeaderLabels(["文件夹 / 媒体", "状态"])
+        self.task_tree.setColumnWidth(0, 260)
+        self.task_tree.itemDoubleClicked.connect(self._open_task_media)
+        task_dock.setWidget(self.task_tree)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, task_dock)
 
         side = QTabWidget()
@@ -329,6 +339,10 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_project)
         media_action = QAction("打开媒体并转换", self)
         media_action.triggered.connect(self.add_media)
+        folder_action = QAction("导入文件夹", self)
+        folder_action.triggered.connect(self.add_media_folder)
+        resume_queue_action = QAction("继续队列", self)
+        resume_queue_action.triggered.connect(self.resume_media_queue)
         models_action = QAction("模型管理", self)
         models_action.triggered.connect(self.show_model_manager)
         transcribe_action = QAction("开始识别", self)
@@ -354,6 +368,8 @@ class MainWindow(QMainWindow):
             new_action,
             open_action,
             media_action,
+            folder_action,
+            resume_queue_action,
             models_action,
             transcribe_action,
             check_action,
@@ -430,7 +446,119 @@ class MainWindow(QMainWindow):
         )
         path, _ = QFileDialog.getOpenFileName(self, "选择要转文字的音视频", "", filters)
         if path:
-            self._ingest_media(Path(path))
+            media = Path(path).resolve()
+            self._enqueue_media_files([media], media.parent)
+
+    def add_media_folder(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "选择包含音视频的文件夹")
+        if not selected:
+            return
+        root = Path(selected).resolve()
+        media_files = sorted(
+            (
+                path.resolve()
+                for path in root.rglob("*")
+                if path.is_file() and path.suffix.lower() in MEDIA_SUFFIXES
+            ),
+            key=lambda path: str(path).casefold(),
+        )
+        if not media_files:
+            QMessageBox.information(self, "没有媒体", "该文件夹及其子文件夹中没有支持的音视频。")
+            return
+        self._enqueue_media_files(media_files, root)
+
+    def _enqueue_media_files(self, media_files: list[Path], root: Path) -> None:
+        root = root.resolve()
+        group = self.task_groups.get(root)
+        if group is None:
+            group = QTreeWidgetItem([f"📁 {root.name or root}", ""])
+            group.setToolTip(0, str(root))
+            self.task_tree.addTopLevelItem(group)
+            self.task_groups[root] = group
+        added = 0
+        for media in media_files:
+            media = media.resolve()
+            if media.suffix.lower() not in MEDIA_SUFFIXES or not media.is_file():
+                continue
+            item = self.task_items.get(media)
+            if item is None:
+                try:
+                    label = str(media.relative_to(root))
+                except ValueError:
+                    label = media.name
+                item = QTreeWidgetItem([label, "等待处理"])
+                item.setData(0, TASK_PATH_ROLE, str(media))
+                item.setToolTip(0, str(media))
+                group.addChild(item)
+                self.task_items[media] = item
+            if media not in self.queued_media and media != self.current_media_path:
+                self.pending_media.append(media)
+                self.queued_media.add(media)
+                item.setText(1, "等待处理")
+                added += 1
+        group.setText(1, f"{group.childCount()} 个文件")
+        group.setExpanded(True)
+        if added:
+            self.statusBar().showMessage(f"已加入 {added} 个媒体文件", 5000)
+        QTimer.singleShot(0, self._start_next_queued_media)
+
+    def _start_next_queued_media(self) -> None:
+        if self.current_media_path is not None:
+            return
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            return
+        if self.translation_thread and self.translation_thread.isRunning():
+            return
+        while self.pending_media:
+            media = self.pending_media.popleft()
+            if not media.is_file():
+                self.queued_media.discard(media)
+                self._set_media_status(media, "文件不存在")
+                continue
+            self.current_media_path = media
+            self._set_media_status(media, "正在导入")
+            self._ingest_media(media)
+            return
+        self.statusBar().showMessage("任务队列已完成", 5000)
+
+    def resume_media_queue(self) -> None:
+        if self.current_media_path and not (
+            self.transcription_thread and self.transcription_thread.isRunning()
+        ):
+            if (
+                self.project
+                and self.project.get_settings().translation_enabled
+                and self.project.list_segments()
+            ):
+                self.translate_pending()
+            else:
+                self.transcribe_media(automatic=True)
+            return
+        self._start_next_queued_media()
+
+    def _set_media_status(self, media: Path, status: str) -> None:
+        if item := self.task_items.get(media.resolve()):
+            item.setText(1, status)
+
+    def _finish_current_media(self, status: str) -> None:
+        media = self.current_media_path
+        if media is None:
+            return
+        self._set_media_status(media, status)
+        self.queued_media.discard(media)
+        self.current_media_path = None
+        QTimer.singleShot(0, self._start_next_queued_media)
+
+    def _open_task_media(self, item: QTreeWidgetItem, _column: int) -> None:
+        value = item.data(0, TASK_PATH_ROLE)
+        if not value:
+            item.setExpanded(not item.isExpanded())
+            return
+        if (self.transcription_thread and self.transcription_thread.isRunning()) or (
+            self.translation_thread and self.translation_thread.isRunning()
+        ):
+            return
+        self._ingest_media(Path(str(value)))
 
     def _ingest_media(self, media_path: Path) -> None:
         media_path = media_path.resolve()
@@ -440,6 +568,7 @@ class MainWindow(QMainWindow):
                 "不支持的文件",
                 "请拖入 MP3、WAV、M4A、FLAC、MP4、MKV、MOV 或 WebM 等音视频文件。",
             )
+            self._finish_current_media("不支持的格式")
             return
         if self.transcription_thread and self.transcription_thread.isRunning():
             QMessageBox.information(self, "识别正在运行", "请等待当前媒体识别完成。")
@@ -470,17 +599,23 @@ class MainWindow(QMainWindow):
             self.player.load(media_path)
         except Exception as exc:
             QMessageBox.critical(self, "无法导入媒体", str(exc))
+            self._finish_current_media("导入失败")
             return
         existing = self.project.list_segments()
         if existing:
+            self._set_media_status(media_path, f"已恢复 {len(existing)} 条字幕")
             self.statusBar().showMessage(
                 f"已恢复该媒体的 {len(existing)} 条字幕；可继续校对或重新识别", 8000
             )
             if self.translation_toggle.isChecked() and any(
                 not segment.has_valid_translation for segment in existing
             ):
+                self._set_media_status(media_path, "等待翻译")
                 QTimer.singleShot(0, self.translate_pending)
+            else:
+                self._finish_current_media("已完成")
         else:
+            self._set_media_status(media_path, "等待识别")
             QTimer.singleShot(0, lambda: self.transcribe_media(automatic=True))
 
     def show_model_manager(self) -> None:
@@ -524,6 +659,8 @@ class MainWindow(QMainWindow):
             ]
             if not manager.is_installed("silero-vad-v6") or not installed:
                 self.statusBar().showMessage("尚未安装完整识别模型，媒体项目已保存", 8000)
+                if self.current_media_path:
+                    self._set_media_status(self.current_media_path, "等待安装模型")
                 return
         settings = self.project.get_settings()
         if automatic:
@@ -557,7 +694,8 @@ class MainWindow(QMainWindow):
             device=device,
             parent=self,
         )
-        self.task_list.addItem(f"识别：{model_id} / {device}")
+        if self.current_media_path:
+            self._set_media_status(self.current_media_path, f"识别中 · {model_id} / {device}")
         self.statusBar().showMessage("正在执行音频标准化、VAD 和识别……")
         thread.succeeded.connect(self._transcription_succeeded)
         thread.failed.connect(self._transcription_failed)
@@ -574,10 +712,17 @@ class MainWindow(QMainWindow):
             f"识别完成：共 {segment_count} 条字幕（任务 {task_id[:8]}）", 8000
         )
         if segment_count and self.translation_toggle.isChecked():
+            if self.current_media_path:
+                self._set_media_status(self.current_media_path, "等待翻译")
             QTimer.singleShot(0, self.translate_pending)
+        elif segment_count:
+            self._finish_current_media(f"识别完成 · {segment_count} 条")
+        else:
+            self._finish_current_media("未检测到语音")
 
     def _transcription_failed(self, message: str) -> None:
         QMessageBox.critical(self, "识别失败", message)
+        self._finish_current_media("识别失败")
         if self.project:
             self.table_model.refresh()
 
@@ -703,7 +848,8 @@ class MainWindow(QMainWindow):
             glossary=_parse_glossary(self.glossary_edit.toPlainText()),
             parent=self,
         )
-        self.task_list.addItem(f"翻译：{provider_id} / {model}")
+        if self.current_media_path:
+            self._set_media_status(self.current_media_path, f"翻译中 · {provider_id} / {model}")
         thread.progress.connect(
             lambda done, total: self.statusBar().showMessage(f"翻译批次 {done}/{total}")
         )
@@ -722,13 +868,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"翻译已暂停：完成 {completed} 条，缓存命中 {cached} 条", 7000
             )
+            self._finish_current_media(f"翻译已暂停 · {completed} 条")
         else:
-            self.statusBar().showMessage(
-                f"翻译完成 {completed} 条，缓存命中 {cached} 条", 7000
-            )
+            self.statusBar().showMessage(f"翻译完成 {completed} 条，缓存命中 {cached} 条", 7000)
+            self._finish_current_media(f"已完成 · 翻译 {completed} 条")
 
     def _translation_failed(self, message: str) -> None:
         QMessageBox.critical(self, "翻译失败", message)
+        self._finish_current_media("翻译失败")
         if self.project:
             self.table_model.refresh()
 
@@ -826,11 +973,25 @@ class MainWindow(QMainWindow):
         paths = [Path(item.toLocalFile()) for item in event.mimeData().urls() if item.isLocalFile()]
         if not paths:
             return
-        first = paths[0]
-        if first.suffix.lower() == ".vstproj":
-            self._open_project_path(first)
-        else:
-            self._ingest_media(first)
+        projects = [path for path in paths if path.suffix.lower() == ".vstproj"]
+        if projects:
+            self._open_project_path(projects[0])
+            event.acceptProposedAction()
+            return
+        for path in paths:
+            resolved = path.resolve()
+            if resolved.is_dir():
+                media_files = sorted(
+                    (
+                        item.resolve()
+                        for item in resolved.rglob("*")
+                        if item.is_file() and item.suffix.lower() in MEDIA_SUFFIXES
+                    ),
+                    key=lambda item: str(item).casefold(),
+                )
+                self._enqueue_media_files(media_files, resolved)
+            elif resolved.suffix.lower() in MEDIA_SUFFIXES:
+                self._enqueue_media_files([resolved], resolved.parent)
         event.acceptProposedAction()
 
     def closeEvent(self, event) -> None:  # noqa: N802

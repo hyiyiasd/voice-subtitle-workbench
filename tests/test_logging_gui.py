@@ -75,3 +75,30 @@ def test_dropping_media_creates_green_project_and_starts_recognition(qtbot, tmp_
     assert window.project.path.parent == paths.data / "projects"
     assert window.project.resolve_media() == media.resolve()
     window.close()
+
+
+def test_folder_media_are_grouped_and_processed_in_order(qtbot, tmp_path: Path) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    media_root = tmp_path / "节目文件夹"
+    media_root.mkdir()
+    media_files = [media_root / "第一话.mp3", media_root / "第二话.wav"]
+    for media in media_files:
+        media.write_bytes(b"test-owned-media")
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    processed: list[Path] = []
+
+    def finish_immediately(media: Path) -> None:
+        processed.append(media)
+        window._finish_current_media("已完成")
+
+    window._ingest_media = finish_immediately  # type: ignore[method-assign]
+    window._enqueue_media_files(media_files, media_root)
+    qtbot.waitUntil(lambda: len(processed) == 2)
+    assert processed == [media.resolve() for media in media_files]
+    assert window.task_tree.topLevelItemCount() == 1
+    group = window.task_tree.topLevelItem(0)
+    assert group.childCount() == 2
+    assert [group.child(index).text(1) for index in range(2)] == ["已完成", "已完成"]
+    window.close()

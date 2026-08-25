@@ -18,9 +18,7 @@ class SileroVAD:
         min_silence_ms: int = 500,
         speech_pad_ms: int = 150,
     ) -> None:
-        self.session = ort.InferenceSession(
-            str(model_path), providers=["CPUExecutionProvider"]
-        )
+        self.session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
         self.threshold = threshold
         self.min_speech_ms = min_speech_ms
         self.min_silence_ms = min_silence_ms
@@ -31,21 +29,25 @@ class SileroVAD:
         if sample_rate not in (8_000, 16_000):
             raise ValueError("Silero VAD 只接受 8kHz 或 16kHz 音频。")
         window_size = 512 if sample_rate == 16_000 else 256
+        context_size = 64 if sample_rate == 16_000 else 32
         state = np.zeros((2, 1, 128), dtype=np.float32)
+        context = np.zeros((1, context_size), dtype=np.float32)
         sample_rate_input = np.array(sample_rate, dtype=np.int64)
         probabilities: list[tuple[int, float]] = []
         for offset in range(0, len(samples), window_size):
             chunk = samples[offset : offset + window_size]
             if len(chunk) < window_size:
                 chunk.extend([0.0] * (window_size - len(chunk)))
+            model_input = np.concatenate((context, np.asarray([chunk], dtype=np.float32)), axis=1)
             output, state = self.session.run(
                 None,
                 {
-                    "input": np.asarray([chunk], dtype=np.float32),
+                    "input": model_input,
                     "state": state,
                     "sr": sample_rate_input,
                 },
             )
+            context = model_input[:, -context_size:]
             probabilities.append((offset, float(np.asarray(output).reshape(-1)[0])))
         return self._probabilities_to_ranges(probabilities, sample_rate, len(samples))
 
@@ -91,4 +93,3 @@ def _merge_overlapping(values: list[SpeechRange]) -> list[SpeechRange]:
         else:
             result.append(value)
     return result
-

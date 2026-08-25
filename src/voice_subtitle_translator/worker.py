@@ -10,6 +10,7 @@ from typing import Any
 
 from .asr import FasterWhisperProvider, ReazonSpeechProvider
 from .domain import AudioChunk
+from .ipc import PROTOCOL_PREFIX, decode_message, encode_message
 from .vad import SileroVAD
 
 
@@ -90,12 +91,18 @@ def handle_request(request: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     for line in sys.stdin:
+        encoded_protocol = line.startswith(PROTOCOL_PREFIX)
         try:
-            request = json.loads(line)
+            request = decode_message(line)
             response = handle_request(request)
         except Exception as exc:
             response = {"id": None, "error": {"code": type(exc).__name__, "message": str(exc)}}
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        output = (
+            encode_message(response)
+            if encoded_protocol
+            else json.dumps(response, ensure_ascii=True, separators=(",", ":"))
+        )
+        sys.stdout.write(output + "\n")
         sys.stdout.flush()
         if response.get("result", {}).get("shutdown"):
             break
