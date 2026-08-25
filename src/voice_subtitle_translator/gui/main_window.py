@@ -373,275 +373,363 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "æ–°å»ºé¡¹ç›®", "", "å­—å¹•é¡¹ç›® (*.vstproj)")
         if not path:
             return
-        settings = Projó{h‘éì¶»§q«^t¹¥è9¬åy¥¬9nîºhnyæëˆ‹İŠ^ÊJB‚ˆYˆÜ[—Ü›Ú™Xİ
-Ù[ŠHOˆ›Û™N‚ˆ]ÈHQš[QX[ÙË™Ù]Ü[‘š[S˜[YJÙ[‹¹¢dùo :hnyæëˆ‹ˆ‹¹keùnezhnyæëˆ
+        settings = ProjectSettings(
+            translation_enabled=self.global_settings.last_translation_enabled
+        )
+        try:
+            self._set_project(Project.create(path, settings))
+        except Exception as exc:
+            QMessageBox.critical(self, "æ— æ³•æ–°å»ºé¡¹ç›®", str(exc))
 
-‹œİ›ÚŠHŠBˆYˆ]‚ˆÙ[‹—ÛÜ[—Ü›Ú™XİÜ]
-]
-]
-JB‚ˆYˆÛÜ[—Ü›Ú™XİÜ]
-Ù[‹]ˆ]
-HOˆ›Û™N‚ˆN‚ˆÙ[‹—ÜÙ]Ü›Ú™Xİ
-›Ú™Xİ›Ü[Š]
-JBˆÙ[‹™ÛØ˜[ÜÙ][™ÜË›\İÜ›Ú™XİHİŠ]
-BˆÙ[‹œÙ][™Ü×ÜİÜ™KœØ]™JÙ[‹™ÛØ˜[ÜÙ][™ÜÊBˆ^Ù\^Ù\[Ûˆ\È^Î‚ˆSY\ÜØYÙP›Ş˜Üš]XØ[
-Ù[‹¹¥è9¬åy¢dùo :hnyæëˆ‹İŠ^ÊJB‚ˆYˆYÛYYXJÙ[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
+    def open_project(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "æ‰“å¼€é¡¹ç›®", "", "å­—å¹•é¡¹ç›® (*.vstproj)")
+        if path:
+            self._open_project_path(Path(path))
 
-N‚ˆ™]\›‚ˆ]ÈHQš[QX[ÙË™Ù]Ü[‘š[S˜[YJÙ[‹º`"y¢êzgìú)áºh¤HŠBˆYˆ]‚ˆÙ[‹œ›Ú™XİœÙ]ÛYYXJ]
-BˆÙ[‹œ^Y\‹›ØY
-]
-]
-JB‚ˆYˆÚİ×Û[Ù[ÛX[˜YÙ\ŠÙ[ŠHOˆ›Û™N‚ˆÙ™›[™HHÙ[‹œ›Ú™Xİ™Ù]ÜÙ][™ÜÊ
-K›Ù™›[™HYˆÙ[‹œ›Ú™Xİ[ÙH˜[ÙBˆX[ÙÈH[Ù[X[˜YÙ\‘X[ÙÊˆ[Ù[X[˜YÙ\ŠÙ[‹œ]Ë[™YÜ™\Ûİ\˜ÙJ›[Ù[ËÛX[šY™\İšœÛÛˆŠJKˆÙ™›[™O[Ù™›[™Kˆ\™[\Ù[‹ˆ
-BˆX[ÙË™^XÊ
-B‚ˆYˆ˜[œØÜšX™WÛYYXJÙ[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
+    def _open_project_path(self, path: Path) -> None:
+        try:
+            self._set_project(Project.open(path))
+            self.global_settings.last_project = str(path)
+            self.settings_store.save(self.global_settings)
+        except Exception as exc:
+            QMessageBox.critical(self, "æ— æ³•æ‰“å¼€é¡¹ç›®", str(exc))
 
-N‚ˆ™]\›‚ˆYˆÙ[‹œ›Ú™Xİœ™\ÛÛ™WÛYYXJ
-H\È›Û™N‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠÙ[‹¹¬¨y§"yj¤¹/dÈ‹º+íùab9­îùb¨9¢%ºaãy¥¬9k¦¹/czgìú)áºh¤y¥¡ù.í¸à ˆŠBˆ™]\›‚ˆYˆÙ[‹˜[œØÜš\[Û—İ™XY[™Ù[‹˜[œØÜš\[Û—İ™XYš\Ô[›š[™Ê
-N‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠÙ[‹º+á¹b*ù«hùg*:/ä:(c‹º+íùëbyo¡yodùbcz+á¹b*ù.îùb¨yk£9¢$8à ˆŠBˆ™]\›‚ˆX[˜YÙ\ˆH[Ù[X[˜YÙ\ŠÙ[‹œ]Ë[™YÜ™\Ûİ\˜ÙJ›[Ù[ËÛX[šY™\İšœÛÛˆŠJBˆ[œİ[YHÂˆ[Ù[™\ØÜš\Ü‹šYˆ›Üˆ[Ù[[ˆX[˜YÙ\‹›[Ù[Ë˜[Y\Ê
-BˆYˆ[Ù[™\ØÜš\Ü‹šYOHœÚ[\›Ë]˜Y]ˆˆ[™X[˜YÙ\‹š\×Ú[œİ[Y
-[Ù[™\ØÜš\Ü‹šY
-BˆBˆYˆ›İX[˜YÙ\‹š\×Ú[œİ[Y
-œÚ[\›Ë]˜Y]ˆŠHÜˆ›İ[œİ[Y‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠˆÙ[‹ˆ¹ª(yg¢ùl&¹§*¹k¢z(áH‹ˆº+á¹b*úg :) HÚ[\›ÈQ9d£:!ìùl$y. 9.*ˆTÔˆ9ª(yg¢ûï#:+íùab9¢dùo 8 '9ª(yg¢ùë¨yä!¸ 'y."ú/oxà ˆ‹ˆ
-Bˆ™]\›‚ˆ[Ù[ÚYÚÈHR[œ]X[ÙË™Ù]][JˆÙ[‹º`"y¢êz+á¹b*ùª(yg¢È‹¹ª(yg¢ûï&ˆ‹[œİ[YY]X›OQ˜[ÙBˆ
-BˆYˆ›İÚÎ‚ˆ™]\›‚ˆ]šXÙWÛX™[ÚÈHR[œ]X[ÙË™Ù]][JˆÙ[‹ˆº`"y¢êz/ä:(c:+¯¹i!È‹ˆº+¯¹i!ûï"ÔH9b'yiâùc%¹i,z-)y¥í¹.#y/&ºgfznæ9b!ù£h»ï"{ï&ˆ‹ˆÈÔH
-[
-H‹ÕQH
-[Ù›Ø]MŠH—KˆY]X›OQ˜[ÙKˆ
-BˆYˆ›İÚÎ‚ˆ™]\›‚ˆ]šXÙHH˜İYHˆYˆ]šXÙWÛX™[œİ\İÚ]
-ÕQHŠH[ÙH˜ÜH‚ˆÙ][™ÜÈHÙ[‹œ›Ú™Xİ™Ù]ÜÙ][™ÜÊ
-BˆÙ][™ÜË˜\Ü—Û[Ù[H[Ù[ÚYˆÙ[‹œ›Ú™XİœØ]™WÜÙ][™ÜÊÙ][™ÜÊBˆ™XYH˜[œØÜš\[Û•™XY
-ˆ›Ú™XİÜ]\Ù[‹œ›Ú™Xİœ]ˆ]Ï\Ù[‹œ]Ëˆ[Ù[ÚY[[Ù[ÚYˆ]šXÙOY]šXÙKˆ\™[\Ù[‹ˆ
-BˆÙ[‹\Ú×Û\İ˜Y][Jˆº+á¹b*ûï&Û[Ù[ÚYHÈÙ]šXÙ_HŠBˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJ¹«hùg*9¢iú(c:gìúh¤y¨!ùaá¹c%¸à UQ9d£:+á¹b*ø )¸ )ˆŠBˆ™XYœİXØÙYYY˜ÛÛ›™Xİ
-Ù[‹—İ˜[œØÜš\[Û—ÜİXØÙYYY
-Bˆ™XY™˜Z[Y˜ÛÛ›™Xİ
-Ù[‹—İ˜[œØÜš\[Û—Ù˜Z[Y
-Bˆ™XY™š[š\ÚY˜ÛÛ›™Xİ
-™XY™[]S]\ŠBˆ™XY™š[š\ÚY˜ÛÛ›™Xİ
-[X™NˆÙ]]ŠÙ[‹˜[œØÜš\[Û—İ™XY‹›Û™JJBˆÙ[‹˜[œØÜš\[Û—İ™XYH™XYˆ™XYœİ\
+    def add_media(self) -> None:
+        if not self._require_project():
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "é€‰æ‹©éŸ³è§†é¢‘")
+        if path:
+            self.project.set_media(path)
+            self.player.load(Path(path))
 
-B‚ˆYˆİ˜[œØÜš\[Û—ÜİXØÙYYY
-Ù[‹\Ú×ÚYˆİ‹ÙYÛY[ØÛİ[ˆ[
-HOˆ›Û™N‚ˆYˆÙ[‹œ›Ú™Xİ‚ˆÙ[‹X›WÛ[Ù[œ™Yœ™\Ú
+    def show_model_manager(self) -> None:
+        offline = self.project.get_settings().offline if self.project else False
+        dialog = ModelManagerDialog(
+            ModelManager(self.paths, bundled_resource("models/manifest.json")),
+            offline=offline,
+            parent=self,
+        )
+        dialog.exec()
 
-BˆÙ[‹—Ùš[\—Ü›Ø›[WÜ›İÜÊÙ[‹œ›Ø›[\×ØXİ[Û‹š\ĞÚXÚÙY
+    def transcribe_media(self) -> None:
+        if not self._require_project():
+            return
+        if self.project.resolve_media() is None:
+            QMessageBox.information(self, "æ²¡æœ‰åª’ä½“", "è¯·å…ˆæ·»åŠ æˆ–é‡æ–°å®šä½éŸ³è§†é¢‘æ–‡ä»¶ã€‚")
+            return
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            QMessageBox.information(self, "è¯†åˆ«æ­£åœ¨è¿è¡Œ", "è¯·ç­‰å¾…å½“å‰è¯†åˆ«ä»»åŠ¡å®Œæˆã€‚")
+            return
+        manager = ModelManager(self.paths, bundled_resource("models/manifest.json"))
+        installed = [
+            model.descriptor.id
+            for model in manager.models.values()
+            if model.descriptor.id != "silero-vad-v6" and manager.is_installed(model.descriptor.id)
+        ]
+        if not manager.is_installed("silero-vad-v6") or not installed:
+            QMessageBox.information(
+                self,
+                "æ¨¡å‹å°šæœªå®‰è£…",
+                "è¯†åˆ«éœ€è¦ Silero VAD å’Œè‡³å°‘ä¸€ä¸ª ASR æ¨¡å‹ï¼Œè¯·å…ˆæ‰“å¼€â€œæ¨¡å‹ç®¡ç†â€ä¸‹è½½ã€‚",
+            )
+            return
+        model_id, ok = QInputDialog.getItem(
+            self, "é€‰æ‹©è¯†åˆ«æ¨¡å‹", "æ¨¡å‹ï¼š", installed, editable=False
+        )
+        if not ok:
+            return
+        device_label, ok = QInputDialog.getItem(
+            self,
+            "é€‰æ‹©è¿è¡Œè®¾å¤‡",
+            "è®¾å¤‡ï¼ˆGPU åˆå§‹åŒ–å¤±è´¥æ—¶ä¸ä¼šé™é»˜åˆ‡æ¢ï¼‰ï¼š",
+            ["CPU (int8)", "CUDA (int8_float16)"],
+            editable=False,
+        )
+        if not ok:
+            return
+        device = "cuda" if device_label.startswith("CUDA") else "cpu"
+        settings = self.project.get_settings()
+        settings.asr_model = model_id
+        self.project.save_settings(settings)
+        thread = TranscriptionThread(
+            project_path=self.project.path,
+            paths=self.paths,
+            model_id=model_id,
+            device=device,
+            parent=self,
+        )
+        self.task_list.addItem(f"è¯†åˆ«ï¼š{model_id} / {device}")
+        self.statusBar().showMessage("æ­£åœ¨æ‰§è¡ŒéŸ³é¢‘æ ‡å‡†åŒ–ã€VAD å’Œè¯†åˆ«â€¦â€¦")
+        thread.succeeded.connect(self._transcription_succeeded)
+        thread.failed.connect(self._transcription_failed)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: setattr(self, "transcription_thread", None))
+        self.transcription_thread = thread
+        thread.start()
 
-JBˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆˆº+á¹b*ùk£9¢$;ï&¹alHÜÙYÛY[ØÛİ[H9§hykeùne{ï"9.îùb¨Hİ\Ú×ÚYÎ_{ï"H‹ˆ
-B‚ˆYˆİ˜[œØÜš\[Û—Ù˜Z[Y
-Ù[‹Y\ÜØYÙNˆİŠHOˆ›Û™N‚ˆSY\ÜØYÙP›Ş˜Üš]XØ[
-Ù[‹º+á¹b*ùi,z-)H‹Y\ÜØYÙJBˆYˆÙ[‹œ›Ú™Xİ‚ˆÙ[‹X›WÛ[Ù[œ™Yœ™\Ú
+    def _transcription_succeeded(self, task_id: str, segment_count: int) -> None:
+        if self.project:
+            self.table_model.refresh()
+            self._filter_problem_rows(self.problems_action.isChecked())
+        self.statusBar().showMessage(
+            f"è¯†åˆ«å®Œæˆï¼šå…± {segment_count} æ¡å­—å¹•ï¼ˆä»»åŠ¡ {task_id[:8]}ï¼‰", 8000
+        )
 
-B‚ˆYˆİ˜[œÛ][Û—İÙÙÛY
-Ù[‹ÚXÚÙYˆ›ÛÛ
-HOˆ›Û™N‚ˆÙ[‹™ÛØ˜[ÜÙ][™ÜË›\İİ˜[œÛ][Û—Ù[˜X›YHÚXÚÙYˆÙ[‹œÙ][™Ü×ÜİÜ™KœØ]™JÙ[‹™ÛØ˜[ÜÙ][™ÜÊBˆYˆÙ[‹œ›Ú™Xİ‚ˆ\[[™PÛÛÜ™[˜]ÜŠÙ[‹œ›Ú™Xİ
-KœÙ]İ˜[œÛ][Û—Ù[˜X›Y
-ÚXÚÙY
-BˆÙ[‹—İ\]WİÛÜšÙ›İ×ÛX™[
+    def _transcription_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "è¯†åˆ«å¤±è´¥", message)
+        if self.project:
+            self.table_model.refresh()
 
-B‚ˆYˆİ\]WİÛÜšÙ›İ×ÛX™[
-Ù[ŠHOˆ›Û™N‚ˆYˆÙ[‹˜[œÛ][Û—İÙÙÛKš\ĞÚXÚÙY
+    def _translation_toggled(self, checked: bool) -> None:
+        self.global_settings.last_translation_enabled = checked
+        self.settings_store.save(self.global_settings)
+        if self.project:
+            PipelineCoordinator(self.project).set_translation_enabled(checked)
+        self._update_workflow_label()
 
-N‚ˆÙ[‹ÛÜšÙ›İ×ÛX™[œÙ]^
-¹odùbc{ï&º+á¹b*ùd#¹ïîú+äy..¹ë 9/dù.+y¥¡ÈŠBˆ[ÙN‚ˆÙ[‹ÛÜšÙ›İ×ÛX™[œÙ]^
-¹odùbc{ï&¹.áz+á¹b*ùnm¹kï9aî¹c§ù¥¡ùkeùneHŠB‚ˆYˆÚXÚ×Ü]X[]JÙ[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
+    def _update_workflow_label(self) -> None:
+        if self.translation_toggle.isChecked():
+            self.workflow_label.setText("å½“å‰ï¼šè¯†åˆ«åç¿»è¯‘ä¸ºç®€ä½“ä¸­æ–‡")
+        else:
+            self.workflow_label.setText("å½“å‰ï¼šä»…è¯†åˆ«å¹¶å¯¼å‡ºåŸæ–‡å­—å¹•")
 
-N‚ˆ™]\›‚ˆÙYÛY[ÈHÙ[‹œ›Ú™Xİ›\İÜÙYÛY[Ê
-Bˆ\WÜ]X[]WÙ›YÜÊÙYÛY[ËÙ[‹œ›Ú™Xİ™Ù]ÜÙ][™ÜÊ
-KœİX]JBˆÚ]Ù[‹œ›Ú™Xİ˜ÛÛ›™Xİ[Û‚ˆ›ÜˆÙYÛY[[ˆÙYÛY[Î‚ˆ[\ÜœÛÛ‚‚ˆÙ[‹œ›Ú™Xİ˜ÛÛ›™Xİ[Û‹™^Xİ]Jˆ•TUHÙYÛY[ÈÑU]X[]WÙ›YÜ×ÚœÛÛOÈÒT‘HYOÈ‹ˆ
-œÛÛ‹™[\ÊÛÜY
-ÙYÛY[œ]X[]WÙ›YÜÊK[œİ\™WØ\ØÚZOQ˜[ÙJKÙYÛY[šY
-Kˆ
-BˆÙ[‹X›WÛ[Ù[œ™Yœ™\Ú
+    def check_quality(self) -> None:
+        if not self._require_project():
+            return
+        segments = self.project.list_segments()
+        apply_quality_flags(segments, self.project.get_settings().subtitle)
+        with self.project.connection:
+            for segment in segments:
+                import json
 
-BˆÙ[‹—Ùš[\—Ü›Ø›[WÜ›İÜÊÙ[‹œ›Ø›[\×ØXİ[Û‹š\ĞÚXÚÙY
+                self.project.connection.execute(
+                    "UPDATE segments SET quality_flags_json=? WHERE id=?",
+                    (json.dumps(sorted(segment.quality_flags), ensure_ascii=False), segment.id),
+                )
+        self.table_model.refresh()
+        self._filter_problem_rows(self.problems_action.isChecked())
+        problem_count = sum(bool(item.quality_flags) for item in segments)
+        self.statusBar().showMessage(f"æ£€æŸ¥å®Œæˆï¼š{problem_count} æ¡å­—å¹•éœ€è¦æ³¨æ„", 5000)
 
-JBˆ›Ø›[WØÛİ[Hİ[J›ÛÛ
-][Kœ]X[]WÙ›YÜÊH›Üˆ][H[ˆÙYÛY[ÊBˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆ¹¨à9§éyk£9¢$;ï&Ü›Ø›[WØÛİ[H9§hykeùnezg :) y¬ê9¡#È‹L
-B‚ˆYˆ˜[œÛ]WÜ[™[™ÊÙ[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
+    def translate_pending(self) -> None:
+        if not self._require_project():
+            return
+        if not self.project.get_settings().translation_enabled:
+            QMessageBox.information(self, "æœªå¯ç”¨ç¿»è¯‘", "è¯·å…ˆå¼€å¯é¡¶éƒ¨â€œå¯ç”¨ç¿»è¯‘â€å¼€å…³ã€‚")
+            return
+        base_url, ok = QInputDialog.getText(
+            self, "ç¿»è¯‘æœåŠ¡", "OpenAI-compatible Base URLï¼š", text="http://127.0.0.1:11434/v1"
+        )
+        if not ok:
+            return
+        model, ok = QInputDialog.getText(self, "ç¿»è¯‘æ¨¡å‹", "æ¨¡å‹åç§°ï¼š")
+        if not ok or not model:
+            return
+        settings = self.project.get_settings()
+        settings.translation_model = model
+        self.project.save_settings(settings)
+        is_local = base_url.startswith(("http://127.0.0.1", "http://localhost"))
+        key = "" if is_local else (CredentialStore().get("openai-compatible") or "")
+        if self.translation_thread and self.translation_thread.isRunning():
+            QMessageBox.information(self, "ç¿»è¯‘æ­£åœ¨è¿è¡Œ", "è¯·ç­‰å¾…å½“å‰ç¿»è¯‘æ‰¹æ¬¡å®Œæˆã€‚")
+            return
+        self._save_side_context()
+        thread = TranslationThread(
+            project_path=self.project.path,
+            config=ProviderConfig(
+                base_url=base_url, api_key=key, structured_output=False, offline=settings.offline
+            ),
+            prompt=self.prompt_edit.toPlainText(),
+            glossary=_parse_glossary(self.glossary_edit.toPlainText()),
+            parent=self,
+        )
+        self.task_list.addItem(f"ç¿»è¯‘ï¼š{model}")
+        thread.progress.connect(
+            lambda done, total: self.statusBar().showMessage(f"ç¿»è¯‘æ‰¹æ¬¡ {done}/{total}")
+        )
+        thread.succeeded.connect(self._translation_succeeded)
+        thread.failed.connect(self._translation_failed)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: setattr(self, "translation_thread", None))
+        self.translation_thread = thread
+        thread.start()
 
-N‚ˆ™]\›‚ˆYˆ›İÙ[‹œ›Ú™Xİ™Ù]ÜÙ][™ÜÊ
-K˜[œÛ][Û—Ù[˜X›Y‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠÙ[‹¹§*¹d+ùå*9ïîú+äH‹º+íùab9o 9d+úhmº`ê8 '9d+ùå*9ïîú+äx 'yo 9aløà ˆŠBˆ™]\›‚ˆ˜\ÙWİ\›ÚÈHR[œ]X[ÙË™Ù]^
-ˆÙ[‹¹ïîú+äy§#yb¨H‹“Ü[RKXÛÛ\]X›H˜\ÙHT“;ï&ˆ‹^Hš‹ËÌLËŒŒŒNŒLMÍİŒH‚ˆ
-BˆYˆ›İÚÎ‚ˆ™]\›‚ˆ[Ù[ÚÈHR[œ]X[ÙË™Ù]^
-Ù[‹¹ïîú+äyª(yg¢È‹¹ª(yg¢ùd#yéì;ï&ˆŠBˆYˆ›İÚÈÜˆ›İ[Ù[‚ˆ™]\›‚ˆÙ][™ÜÈHÙ[‹œ›Ú™Xİ™Ù]ÜÙ][™ÜÊ
-BˆÙ][™ÜË˜[œÛ][Û—Û[Ù[H[Ù[ˆÙ[‹œ›Ú™XİœØ]™WÜÙ][™ÜÊÙ][™ÜÊBˆ\×ÛØØ[H˜\ÙWİ\›œİ\İÚ]
+    def _translation_succeeded(self, completed: int, cached: int, stopped: bool) -> None:
+        if self.project:
+            self.table_model.refresh()
+            self._filter_problem_rows(self.problems_action.isChecked())
+        if stopped:
+            self.statusBar().showMessage(
+                f"ç¿»è¯‘å·²æš‚åœï¼šå®Œæˆ {completed} æ¡ï¼Œç¼“å­˜å‘½ä¸­ {cached} æ¡", 7000
+            )
+        else:
+            self.statusBar().showMessage(
+                f"ç¿»è¯‘å®Œæˆ {completed} æ¡ï¼Œç¼“å­˜å‘½ä¸­ {cached} æ¡", 7000
+            )
 
-š‹ËÌLËŒŒŒH‹š‹ËÛØØ[ÜİŠJBˆÙ^HHˆˆYˆ\×ÛØØ[[ÙH
-Ü™Y[X[İÜ™J
-K™Ù]
-›Ü[˜ZKXÛÛ\]X›HŠHÜˆˆŠBˆYˆÙ[‹˜[œÛ][Û—İ™XY[™Ù[‹˜[œÛ][Û—İ™XYš\Ô[›š[™Ê
-N‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠÙ[‹¹ïîú+äy«hùg*:/ä:(c‹º+íùëbyo¡yodùbcyïîú+äy¢ny«(yk£9¢$8à ˆŠBˆ™]\›‚ˆÙ[‹—ÜØ]™WÜÚYWØÛÛ^
+    def _translation_failed(self, message: str) -> None:
+        QMessageBox.critical(self, "ç¿»è¯‘å¤±è´¥", message)
+        if self.project:
+            self.table_model.refresh()
 
-Bˆ™XYH˜[œÛ][Û•™XY
-ˆ›Ú™XİÜ]\Ù[‹œ›Ú™Xİœ]ˆÛÛ™šYÏT›İšY\ÛÛ™šYÊˆ˜\ÙWİ\›X˜\ÙWİ\›\WÚÙ^OZÙ^KİXİ\™YÛİ]]Q˜[ÙKÙ™›[™O\Ù][™ÜË›Ù™›[™Bˆ
-Kˆ›Û\\Ù[‹œ›Û\ÙY]ÔZ[•^
+    def search_replace(self) -> None:
+        if not self._require_project():
+            return
+        source, ok = QInputDialog.getText(self, "æœç´¢æ›¿æ¢", "æŸ¥æ‰¾åŸæ–‡ï¼š")
+        if not ok or not source:
+            return
+        replacement, ok = QInputDialog.getText(self, "æœç´¢æ›¿æ¢", "æ›¿æ¢ä¸ºï¼š")
+        if not ok:
+            return
+        changed = 0
+        for segment in self.project.list_segments():
+            if source in segment.source_text:
+                self.project.update_source_text(
+                    segment.id, segment.source_text.replace(source, replacement), lock=True
+                )
+                changed += 1
+        self.table_model.refresh()
+        self._filter_problem_rows(self.problems_action.isChecked())
+        self.statusBar().showMessage(f"å·²æ›¿æ¢ {changed} æ¡å­—å¹•", 5000)
 
-KˆÛÜÜØ\OWÜ\œÙWÙÛÜÜØ\JÙ[‹™ÛÜÜØ\WÙY]ÔZ[•^
+    def _filter_problem_rows(self, enabled: bool) -> None:
+        for row, segment in enumerate(self.table_model.segments):
+            self.table.setRowHidden(row, enabled and not bool(segment.quality_flags))
 
-JKˆ\™[\Ù[‹ˆ
-BˆÙ[‹\Ú×Û\İ˜Y][Jˆ¹ïîú+ä{ï&Û[Ù[HŠBˆ™XYœ›ÙÜ™\ÜË˜ÛÛ›™Xİ
-ˆ[X™HÛ™Kİ[ˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆ¹ïîú+äy¢ny«(HÙÛ™_KŞİİ[HŠBˆ
-Bˆ™XYœİXØÙYYY˜ÛÛ›™Xİ
-Ù[‹—İ˜[œÛ][Û—ÜİXØÙYYY
-Bˆ™XY™˜Z[Y˜ÛÛ›™Xİ
-Ù[‹—İ˜[œÛ][Û—Ù˜Z[Y
-Bˆ™XY™š[š\ÚY˜ÛÛ›™Xİ
-™XY™[]S]\ŠBˆ™XY™š[š\ÚY˜ÛÛ›™Xİ
-[X™NˆÙ]]ŠÙ[‹˜[œÛ][Û—İ™XY‹›Û™JJBˆÙ[‹˜[œÛ][Û—İ™XYH™XYˆ™XYœİ\
+    def export_dialog(self) -> None:
+        if not self._require_project():
+            return
+        formats = "SRT (*.srt);;WebVTT (*.vtt);;ASS (*.ass);;æ–‡æœ¬ (*.txt);;JSON (*.json)"
+        path, selected = QFileDialog.getSaveFileName(self, "å¯¼å‡ºå­—å¹•", "", formats)
+        if not path:
+            return
+        format_map = {
+            "SRT": ExportFormat.SRT,
+            "WebVTT": ExportFormat.VTT,
+            "ASS": ExportFormat.ASS,
+            "æ–‡æœ¬": ExportFormat.TXT,
+            "JSON": ExportFormat.JSON,
+        }
+        output_format = next(
+            (value for key, value in format_map.items() if selected.startswith(key)), None
+        )
+        output_format = output_format or ExportFormat(Path(path).suffix.lstrip(".").lower())
+        choices = ["åŸæ–‡"]
+        allowed, reason = can_export(self.project.list_segments(), ExportContent.TRANSLATION)
+        if allowed:
+            choices.extend(["è¯‘æ–‡", "åŒè¯­"])
+        content_name, ok = QInputDialog.getItem(self, "å¯¼å‡ºå†…å®¹", "å†…å®¹ï¼š", choices, editable=False)
+        if not ok:
+            return
+        content_map = {
+            "åŸæ–‡": ExportContent.SOURCE,
+            "è¯‘æ–‡": ExportContent.TRANSLATION,
+            "åŒè¯­": ExportContent.BILINGUAL,
+        }
+        try:
+            export_subtitles(
+                self.project.list_segments(),
+                path,
+                output_format=output_format,
+                content=content_map[content_name],
+            )
+            self.statusBar().showMessage(f"å·²å¯¼å‡ºï¼š{path}", 5000)
+        except TranslationUnavailableError:
+            QMessageBox.information(self, "æ— æ³•å¯¼å‡ºè¯‘æ–‡", reason)
+        except Exception as exc:
+            QMessageBox.critical(self, "å¯¼å‡ºå¤±è´¥", str(exc))
 
-B‚ˆYˆİ˜[œÛ][Û—ÜİXØÙYYY
-Ù[‹ÛÛ\]Yˆ[ØXÚYˆ[İÜYˆ›ÛÛ
-HOˆ›Û™N‚ˆYˆÙ[‹œ›Ú™Xİ‚ˆÙ[‹X›WÛ[Ù[œ™Yœ™\Ú
+    def _seek_selected(self, index: QModelIndex) -> None:
+        if index.isValid() and index.row() < len(self.table_model.segments):
+            self.player.seek_ms(self.table_model.segments[index.row()].start_ms)
 
-BˆÙ[‹—Ùš[\—Ü›Ø›[WÜ›İÜÊÙ[‹œ›Ø›[\×ØXİ[Û‹š\ĞÚXÚÙY
+    def _require_project(self) -> bool:
+        if self.project:
+            return True
+        QMessageBox.information(self, "æ²¡æœ‰é¡¹ç›®", "è¯·å…ˆæ–°å»ºæˆ–æ‰“å¼€ .vstproj é¡¹ç›®ã€‚")
+        return False
 
-JBˆYˆİÜY‚ˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆˆ¹ïîú+äymì¹¦ ¹`g;ï&¹k£9¢$ØÛÛ\]YH9§h{ï#9ï$ùkf9doy.+HØØXÚYH9§hH‹Ìˆ
-Bˆ[ÙN‚ˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆˆ¹ïîú+äyk£9¢$ØÛÛ\]YH9§h{ï#9ï$ùkf9doy.+HØØXÚYH9§hH‹Ìˆ
-B‚ˆYˆİ˜[œÛ][Û—Ù˜Z[Y
-Ù[‹Y\ÜØYÙNˆİŠHOˆ›Û™N‚ˆSY\ÜØYÙP›Ş˜Üš]XØ[
-Ù[‹¹ïîú+äyi,z-)H‹Y\ÜØYÙJBˆYˆÙ[‹œ›Ú™Xİ‚ˆÙ[‹X›WÛ[Ù[œ™Yœ™\Ú
+    def show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            f"å…³äº{APP_NAME}",
+            f"{APP_NAME} {__version__}\n\nä½œè€…ï¼š{AUTHOR}\nBç«™ï¼š{BILIBILI_URL}\n"
+            f"GitHubï¼š{GITHUB_URL}\nå®˜æ–¹ç‰ˆæœ¬ï¼šGitHub Releases\nè®¸å¯è¯ï¼šMIT\n\n"
+            "ç¬¬ä¸‰æ–¹ç»„ä»¶è®¸å¯è¯¦è§ THIRD_PARTY_NOTICES.mdã€‚",
+        )
 
-B‚ˆYˆÙX\˜ÚÜ™\XÙJÙ[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
 
-N‚ˆ™]\›‚ˆÛİ\˜ÙKÚÈHR[œ]X[ÙË™Ù]^
-Ù[‹¹¤'9í(¹¦ïù£hˆ‹¹§éy¢o¹c§ù¥¡ûï&ˆŠBˆYˆ›İÚÈÜˆ›İÛİ\˜ÙN‚ˆ™]\›‚ˆ™\XÙ[Y[ÚÈHR[œ]X[ÙË™Ù]^
-Ù[‹¹¤'9í(¹¦ïù£hˆ‹¹¦ïù£h¹..»ï&ˆŠBˆYˆ›İÚÎ‚ˆ™]\›‚ˆÚ[™ÙYHˆ›ÜˆÙYÛY[[ˆÙ[‹œ›Ú™Xİ›\İÜÙYÛY[Ê
-N‚ˆYˆÛİ\˜ÙH[ˆÙYÛY[œÛİ\˜ÙWİ^‚ˆÙ[‹œ›Ú™Xİ\]WÜÛİ\˜ÙWİ^
-ˆÙYÛY[šYÙYÛY[œÛİ\˜ÙWİ^œ™\XÙJÛİ\˜ÙK™\XÙ[Y[
-KØÚÏUYBˆ
-BˆÚ[™ÙY
-ÏHBˆÙ[‹X›WÛ[Ù[œ™Yœ™\Ú
+    def dropEvent(self, event) -> None:  # noqa: N802
+        paths = [Path(item.toLocalFile()) for item in event.mimeData().urls() if item.isLocalFile()]
+        if not paths:
+            return
+        first = paths[0]
+        if first.suffix.lower() == ".vstproj":
+            self._open_project_path(first)
+        elif self._require_project():
+            self.project.set_media(first)
+            self.player.load(first)
+        event.acceptProposedAction()
 
-BˆÙ[‹—Ùš[\—Ü›Ø›[WÜ›İÜÊÙ[‹œ›Ø›[\×ØXİ[Û‹š\ĞÚXÚÙY
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.transcription_thread and self.transcription_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "è¯†åˆ«ä»»åŠ¡å°šæœªç»“æŸ",
+                "å½“å‰è¯†åˆ«æ‰¹æ¬¡å®Œæˆå¹¶ä¿å­˜å‰ä¸èƒ½å…³é—­ç¨‹åºã€‚æ¨¡å‹è¿›ç¨‹å¼‚å¸¸é€€å‡ºåï¼Œé¡¹ç›®å¯æ¢å¤ã€‚",
+            )
+            event.ignore()
+            return
+        if self.translation_thread and self.translation_thread.isRunning():
+            if self.project and self.project.get_settings().translation_enabled:
+                PipelineCoordinator(self.project).set_translation_enabled(False)
+                self.translation_toggle.blockSignals(True)
+                self.translation_toggle.setChecked(False)
+                self.translation_toggle.blockSignals(False)
+            QMessageBox.information(
+                self,
+                "ç¿»è¯‘æ‰¹æ¬¡å°šæœªç»“æŸ",
+                "å·²åœæ­¢è°ƒåº¦æ–°æ‰¹æ¬¡ã€‚è¯·ç­‰å¾…å½“å‰è¯·æ±‚ä¿å­˜å®Œæˆåå†å…³é—­ç¨‹åºã€‚",
+            )
+            event.ignore()
+            return
+        if self.project:
+            self._save_side_context()
+            self.project.close()
+            self.project = None
+        super().closeEvent(event)
 
-JBˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆ¹mì¹¦ïù£hˆØÚ[™ÙYH9§hykeùneH‹L
-B‚ˆYˆÙš[\—Ü›Ø›[WÜ›İÜÊÙ[‹[˜X›Yˆ›ÛÛ
-HOˆ›Û™N‚ˆ›Üˆ›İËÙYÛY[[ˆ[[Y\˜]JÙ[‹X›WÛ[Ù[œÙYÛY[ÊN‚ˆÙ[‹X›KœÙ]›İÒY[Š›İË[˜X›Y[™›İ›ÛÛ
-ÙYÛY[œ]X[]WÙ›YÜÊJB‚ˆYˆ^ÜÙX[ÙÊÙ[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
+    def _save_side_context(self) -> None:
+        if not self.project:
+            return
+        self.project.save_active_prompt(self.prompt_edit.toPlainText())
+        self.project.save_glossary(_parse_glossary(self.glossary_edit.toPlainText()))
 
-N‚ˆ™]\›‚ˆ›Ü›X]ÈH”Ô•
 
-‹œÜ
-NÎÕÙX••
+def _format_milliseconds(value: int) -> str:
+    hours, remainder = divmod(value, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
-‹
-NÎĞTÔÈ
 
-‹˜\ÜÊNÎù¥¡ù§+
+def _parse_timestamp(value: str) -> int:
+    parts = value.replace(",", ".").split(":")
+    if len(parts) != 3:
+        raise ValueError(value)
+    hours, minutes = int(parts[0]), int(parts[1])
+    seconds = float(parts[2])
+    return round((hours * 3600 + minutes * 60 + seconds) * 1000)
 
-‹
-NÎÒ”ÓÓˆ
 
-‹šœÛÛŠH‚ˆ]Ù[XİYHQš[QX[ÙË™Ù]Ø]™Qš[S˜[YJÙ[‹¹kï9aî¹keùneH‹ˆ‹›Ü›X]ÊBˆYˆ›İ]‚ˆ™]\›‚ˆ›Ü›X]ÛX\HÂˆ”Ô•ˆ^Ü›Ü›X]”Ô•ˆ•ÙX••ˆ^Ü›Ü›X]••ˆTÔÈˆ^Ü›Ü›X]TÔËˆ¹¥¡ù§+ˆ^Ü›Ü›X]•ˆ’”ÓÓˆˆ^Ü›Ü›X]’”ÓÓ‹ˆBˆİ]]Ù›Ü›X]H™^
-ˆ
-˜[YH›ÜˆÙ^K˜[YH[ˆ›Ü›X]ÛX\š][\Ê
-HYˆÙ[XİYœİ\İÚ]
-Ù^JJK›Û™Bˆ
-Bˆİ]]Ù›Ü›X]Hİ]]Ù›Ü›X]Üˆ^Ü›Ü›X]
-]
-]
-KœİY™š^›İš\
-‹ˆŠK›İÙ\Š
-JBˆÚÚXÙ\ÈHÈ¹c§ù¥¡È—Bˆ[İÙY™X\ÛÛˆHØ[—Ù^Ü
-Ù[‹œ›Ú™Xİ›\İÜÙYÛY[Ê
-K^ÜÛÛ[•S”ÓUSÓŠBˆYˆ[İÙY‚ˆÚÚXÙ\Ë™^[™
-Èº+äy¥¡È‹¹cã:+ëH—JBˆÛÛ[Û˜[YKÚÈHR[œ]X[ÙË™Ù]][JÙ[‹¹kï9aî¹a¡yk®H‹¹a¡yk®{ï&ˆ‹ÚÚXÙ\ËY]X›OQ˜[ÙJBˆYˆ›İÚÎ‚ˆ™]\›‚ˆÛÛ[ÛX\HÂˆ¹c§ù¥¡Èˆ^ÜÛÛ[”ÓÕTÑKˆº+äy¥¡Èˆ^ÜÛÛ[•S”ÓUSÓ‹ˆ¹cã:+ëHˆ^ÜÛÛ[’SS‘ÕPSˆBˆN‚ˆ^ÜÜİX]\ÊˆÙ[‹œ›Ú™Xİ›\İÜÙYÛY[Ê
-Kˆ]ˆİ]]Ù›Ü›X][İ]]Ù›Ü›X]ˆÛÛ[XÛÛ[ÛX\ØÛÛ[Û˜[YWKˆ
-BˆÙ[‹œİ]\Ğ˜\Š
-KœÚİÓY\ÜØYÙJˆ¹mì¹kï9aî»ï&Ü]H‹L
-Bˆ^Ù\˜[œÛ][Û•[˜]˜Z[X›Q\œ›Ü‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠÙ[‹¹¥è9¬åykï9aîº+äy¥¡È‹™X\ÛÛŠBˆ^Ù\^Ù\[Ûˆ\È^Î‚ˆSY\ÜØYÙP›Ş˜Üš]XØ[
-Ù[‹¹kï9aî¹i,z-)H‹İŠ^ÊJB‚ˆYˆÜÙYZ×ÜÙ[XİY
-Ù[‹[™^ˆS[Ù[[™^
-HOˆ›Û™N‚ˆYˆ[™^š\Õ˜[Y
-
-H[™[™^œ›İÊ
-H[ŠÙ[‹X›WÛ[Ù[œÙYÛY[ÊN‚ˆÙ[‹œ^Y\‹œÙYZ×Û\ÊÙ[‹X›WÛ[Ù[œÙYÛY[ÖÚ[™^œ›İÊ
-WKœİ\Û\ÊB‚ˆYˆÜ™\]Z\™WÜ›Ú™Xİ
-Ù[ŠHOˆ›ÛÛ‚ˆYˆÙ[‹œ›Ú™Xİ‚ˆ™]\›ˆYBˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠÙ[‹¹¬¨y§"zhnyæëˆ‹º+íùab9¥¬9nî¹¢%¹¢dùo œİ›Úˆ:hnyæë¸à ˆŠBˆ™]\›ˆ˜[ÙB‚ˆYˆÚİ×ØX›İ]
-Ù[ŠHOˆ›Û™N‚ˆSY\ÜØYÙP›Ş˜X›İ]
-ˆÙ[‹ˆˆ¹alù.£ĞTÓSQ_H‹ˆˆĞTÓSQ_H××İ™\œÚ[Û—×ßW—¹/g: !{ï&ĞUUÔŸW¹êæ{ï&Ğ’SP’SWÕT“Wˆ‚ˆˆ‘Ú]X»ï&ÑÒUP—ÕT“W¹k¦9¥®yâb9§+;ï&‘Ú]Xˆ™[X\Ù\×º+®9cëú+à{ï&“RU—ˆ‚ˆ¹ë+9."y¥®yîá9.íº+®9cëú+éº)àHT‘ÔT•WÓ“ÕPÑTË›Y8à ˆ‹ˆ
-B‚ˆYˆ˜YÑ[\‘]™[
-Ù[‹]™[
-HOˆ›Û™NˆÈ›ÜXNˆ‚ˆYˆ]™[›Z[YQ]J
-Kš\Õ\›Ê
-N‚ˆ]™[˜XØÙ\›ÜÜÙYXİ[ÛŠ
-B‚ˆYˆ›Ü]™[
-Ù[‹]™[
-HOˆ›Û™NˆÈ›ÜXNˆ‚ˆ]ÈHÔ]
-][KÓØØ[š[J
-JH›Üˆ][H[ˆ]™[›Z[YQ]J
-K\›Ê
-HYˆ][Kš\ÓØØ[š[J
-WBˆYˆ›İ]Î‚ˆ™]\›‚ˆš\œİH]ÖÌBˆYˆš\œİœİY™š^›İÙ\Š
-HOH‹œİ›Úˆ‚ˆÙ[‹—ÛÜ[—Ü›Ú™XİÜ]
-š\œİ
-Bˆ[YˆÙ[‹—Ü™\]Z\™WÜ›Ú™Xİ
-
-N‚ˆÙ[‹œ›Ú™XİœÙ]ÛYYXJš\œİ
-BˆÙ[‹œ^Y\‹›ØY
-š\œİ
-Bˆ]™[˜XØÙ\›ÜÜÙYXİ[ÛŠ
-B‚ˆYˆÛÜÙQ]™[
-Ù[‹]™[
-HOˆ›Û™NˆÈ›ÜXNˆ‚ˆYˆÙ[‹˜[œØÜš\[Û—İ™XY[™Ù[‹˜[œØÜš\[Û—İ™XYš\Ô[›š[™Ê
-N‚ˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠˆÙ[‹ˆº+á¹b*ù.îùb¨yl&¹§*¹îäù§gÈ‹ˆ¹odùbcz+á¹b*ù¢ny«(yk£9¢$9nm¹/çykf9bcy.#z ïyalúeëyê"ùn£øà ¹ª(yg¢ú/æùê"ùo ¹n.:` 9aî¹d#»ï#:hnyæë¹cëù h¹i#xà ˆ‹ˆ
-Bˆ]™[šYÛ›Ü™J
-Bˆ™]\›‚ˆYˆÙ[‹˜[œÛ][Û—İ™XY[™Ù[‹˜[œÛ][Û—İ™XYš\Ô[›š[™Ê
-N‚ˆYˆÙ[‹œ›Ú™Xİ[™Ù[‹œ›Ú™Xİ™Ù]ÜÙ][™ÜÊ
-K˜[œÛ][Û—Ù[˜X›Y‚ˆ\[[™PÛÛÜ™[˜]ÜŠÙ[‹œ›Ú™Xİ
-KœÙ]İ˜[œÛ][Û—Ù[˜X›Y
-˜[ÙJBˆÙ[‹˜[œÛ][Û—İÙÙÛK˜›ØÚÔÚYÛ˜[ÊYJBˆÙ[‹˜[œÛ][Û—İÙÙÛKœÙ]ÚXÚÙY
-˜[ÙJBˆÙ[‹˜[œÛ][Û—İÙÙÛK˜›ØÚÔÚYÛ˜[Ê˜[ÙJBˆSY\ÜØYÙP›Şš[™›Ü›X][ÛŠˆÙ[‹ˆ¹ïîú+äy¢ny«(yl&¹§*¹îäù§gÈ‹ˆ¹mì¹`g9«hº, ùn©¹¥¬9¢ny«(xà º+íùëbyo¡yodùbcz+íù¬`¹/çykf9k£9¢$9d#¹a£yalúeëyê"ùn£øà ˆ‹ˆ
-Bˆ]™[šYÛ›Ü™J
-Bˆ™]\›‚ˆYˆÙ[‹œ›Ú™Xİ‚ˆÙ[‹—ÜØ]™WÜÚYWØÛÛ^
-
-BˆÙ[‹œ›Ú™Xİ˜ÛÜÙJ
-BˆÙ[‹œ›Ú™XİH›Û™Bˆİ\\Š
-K˜ÛÜÙQ]™[
-]™[
-B‚ˆYˆÜØ]™WÜÚYWØÛÛ^
-Ù[ŠHOˆ›Û™N‚ˆYˆ›İÙ[‹œ›Ú™Xİ‚ˆ™]\›‚ˆÙ[‹œ›Ú™XİœØ]™WØXİ]™WÜ›Û\
-Ù[‹œ›Û\ÙY]ÔZ[•^
-
-JBˆÙ[‹œ›Ú™XİœØ]™WÙÛÜÜØ\JÜ\œÙWÙÛÜÜØ\JÙ[‹™ÛÜÜØ\WÙY]ÔZ[•^
-
-JJB‚‚™YˆÙ›Ü›X]ÛZ[\ÙXÛÛ™Ê˜[YNˆ[
-HOˆİ‚ˆİ\œË™[XZ[™\ˆH]›[Ù
-˜[YK×ÍŒÌ
-BˆZ[]\Ë™[XZ[™\ˆH]›[Ù
-™[XZ[™\‹ŒÌ
-BˆÙXÛÛ™ËZ[\ÙXÛÛ™ÈH]›[Ù
-™[XZ[™\‹WÌ
-Bˆ™]\›ˆˆÚİ\œÎŒ™NÛZ[]\ÎŒ™NÜÙXÛÛ™ÎŒ™KÛZ[\ÙXÛÛ™ÎŒÙH‚‚‚™YˆÜ\œÙWİ[Y\İ[\
-˜[YNˆİŠHOˆ[‚ˆ\ÈH˜[YKœ™\XÙJ‹‹‹ˆŠKœÜ]
-ˆŠBˆYˆ[Š\ÊHOHÎ‚ˆ˜Z\ÙH˜[YQ\œ›ÜŠ˜[YJBˆİ\œËZ[]\ÈH[
-\ÖÌJK[
-\ÖÌWJBˆÙXÛÛ™ÈH›Ø]
-\ÖÌ—JBˆ™]\›ˆ›İ[™
-
-İ\œÈ
-ˆÍŒ
-ÈZ[]\È
-ˆŒ
-ÈÙXÛÛ™ÊH
-ˆL
-B‚‚™YˆÜ\œÙWÙÛÜÜØ\J˜[YNˆİŠHOˆ\İİ\VÜİ‹İ—WN‚ˆ™\İ[H×Bˆ›Üˆ[™H[ˆ˜[YKœÜ][™\Ê
-N‚ˆYˆHˆ[ˆ[™N‚ˆÛİ\˜ÙK\™Ù]H[™KœÜ]
-H‹JBˆYˆÛİ\˜ÙKœİš\
-
-H[™\™Ù]œİš\
-
-N‚ˆ™\İ[˜\[™
-
-Ûİ\˜ÙKœİš\
-
-K\™Ù]œİš\
-
-JJBˆ™]\›ˆ™\İ[
+def _parse_glossary(value: str) -> list[tuple[str, str]]:
+    result = []
+    for line in value.splitlines():
+        if "=" in line:
+            source, target = line.split("=", 1)
+            if source.strip() and target.strip():
+                result.append((source.strip(), target.strip()))
+    return result
