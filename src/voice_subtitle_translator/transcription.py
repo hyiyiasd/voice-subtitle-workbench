@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 
@@ -33,7 +34,12 @@ class TranscriptionService:
         model_id: str,
         device: str = "cpu",
         compute_type: str | None = None,
+        on_progress: Callable[[str, int, int], None] | None = None,
     ) -> str:
+        def report(stage: str, completed: int) -> None:
+            if on_progress:
+                on_progress(stage, completed, 100)
+
         media = self.project.resolve_media()
         if media is None:
             raise FileNotFoundError("项目没有可用的媒体文件，请先重新定位媒体。")
@@ -41,8 +47,10 @@ class TranscriptionService:
         self.model_manager.verify(model_id)
         settings = self.project.get_settings()
         normalized = self.paths.cache / "audio" / f"{quick_file_fingerprint(media)}.wav"
+        report("正在标准化音频", 3)
         if not normalized.is_file():
             normalize_audio(self.ffmpeg_path, media, normalized)
+        report("音频标准化完成，正在检测语音区间", 12)
         with WorkerClient(cwd=self.paths.root) as vad_worker:
             vad_result = vad_worker.call(
                 "vad.detect",
@@ -56,6 +64,7 @@ class TranscriptionService:
         ranges = merge_speech_ranges(
             [SpeechRange(**value) for value in vad_result["ranges"]]
         )
+        report(f"语音检测完成：{len(ranges)} 个片段", 20)
         task_id = self.project.create_task(
             TaskKind.TRANSCRIBE,
             total_batches=len(ranges),
@@ -72,6 +81,13 @@ class TranscriptionService:
         try:
             with WorkerClient(cwd=self.paths.root) as worker:
                 for index, speech_range in enumerate(ranges):
+                    recognition_progress = 20 + round(
+                        index / max(len(ranges), 1) * 75
+                    )
+                    report(
+                        f"正在识别片段 {index + 1}/{len(ranges)}",
+                        recognition_progress,
+                    )
                     chunk_path = self.paths.temp / f"{task_id}-{index:06d}.wav"
                     try:
                         extract_wav_range(normalized, chunk_path, speech_range)
@@ -107,8 +123,14 @@ class TranscriptionService:
                         index,
                         {"segment_ids": [segment.id for segment in created]},
                     )
+                    report(
+                        f"已识别片段 {index + 1}/{len(ranges)}",
+                        20 + round((index + 1) / max(len(ranges), 1) * 75),
+                    )
+            report("正在检查字幕质量并保存", 97)
             self._save_quality_flags()
             self.project.set_task_status(task_id, TaskStatus.COMPLETED)
+            report("识别完成", 100)
             return task_id
         except Exception as exc:
             self.project.set_task_status(task_id, TaskStatus.FAILED, str(exc))

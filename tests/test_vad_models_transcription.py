@@ -216,13 +216,19 @@ def test_transcription_saves_batch_and_removes_chunk(tmp_path: Path, monkeypatch
 
     with Project.create(project_path, ProjectSettings()) as project:
         project.set_media(media)
+        progress: list[tuple[str, int, int]] = []
         task_id = TranscriptionService(
             project,
             paths=paths,
             model_manager=FakeManager(),  # type: ignore[arg-type]
             ffmpeg_path=ffmpeg,
-        ).run(model_id="reazonspeech-k2-ja")
+        ).run(
+            model_id="reazonspeech-k2-ja",
+            on_progress=lambda stage, done, total: progress.append((stage, done, total)),
+        )
         assert project.task(task_id)["status"] == "completed"
         assert project.task(task_id)["completed_batches"] == 1
         assert [item.source_text for item in project.list_segments()] == ["テスト"]
+        assert progress[-1] == ("识别完成", 100, 100)
+        assert any("语音检测完成" in stage for stage, _done, _total in progress)
     assert not list(paths.temp.glob(f"{task_id}-*.wav"))

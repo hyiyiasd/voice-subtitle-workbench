@@ -1,6 +1,9 @@
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+
 from voice_subtitle_translator.gpu_runtime import GPURuntimeManager
+from voice_subtitle_translator.gui.batch_operation_dialog import BatchOperationDialog
 from voice_subtitle_translator.gui.gpu_settings_dialog import GPUSettingsDialog
 from voice_subtitle_translator.gui.main_window import MainWindow
 from voice_subtitle_translator.gui.model_manager_dialog import (
@@ -76,7 +79,13 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     assert "当前：仅识别并导出原文字幕" == window.workflow_label.text()
     assert window.translation_toggle.isChecked() is False
     toolbar_labels = [action.text() for action in window.toolbar.actions() if action.text()]
-    assert toolbar_labels == ["添加媒体", "导入文件夹", "开始识别", "导出字幕"]
+    assert toolbar_labels == [
+        "添加媒体",
+        "导入文件夹",
+        "批量操作…",
+        "开始识别",
+        "导出字幕",
+    ]
     menu_labels = [action.text() for action in window.menuBar().actions()]
     assert menu_labels == ["项目", "处理", "设置", "帮助"]
     window.close()
@@ -124,4 +133,22 @@ def test_folder_media_are_grouped_and_processed_in_order(qtbot, tmp_path: Path) 
     group = window.task_tree.topLevelItem(0)
     assert group.childCount() == 2
     assert [group.child(index).text(1) for index in range(2)] == ["已完成", "已完成"]
+    assert group.checkState(0) == Qt.CheckState.Checked
+    for index in range(2):
+        child = group.child(index)
+        assert child.checkState(0) == Qt.CheckState.Checked
+        assert window.task_tree.itemWidget(child, 2) is not None
     window.close()
+
+
+def test_batch_dialog_supports_folder_and_individual_selection(qtbot, tmp_path: Path) -> None:
+    root = tmp_path / "节目"
+    media = [(root / "01.mp3", True), (root / "02.wav", True)]
+    dialog = BatchOperationDialog([(root, media)])
+    qtbot.addWidget(dialog)
+    group = dialog.tree.topLevelItem(0)
+    assert len(dialog.selected_paths()) == 2
+    group.child(1).setCheckState(0, Qt.CheckState.Unchecked)
+    assert dialog.selected_paths() == [media[0][0].resolve()]
+    dialog._set_all(Qt.CheckState.Unchecked)
+    assert dialog.selected_paths() == []
