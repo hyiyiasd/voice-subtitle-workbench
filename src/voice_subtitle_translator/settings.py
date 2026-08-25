@@ -12,6 +12,8 @@ class GlobalSettings:
     window_geometry: str = ""
     last_project: str = ""
     asr_device: str = "cpu"
+    asr_compute_type: str = "int8"
+    asr_profile: str = "cpu_int8"
     translation_provider: str = ""
     translation_base_url: str = ""
     translation_model: str = ""
@@ -27,6 +29,13 @@ class SettingsStore:
             return GlobalSettings()
         try:
             value = json.loads(self._path.read_text(encoding="utf-8"))
+            if "asr_profile" not in value:
+                if value.get("asr_device") == "cuda":
+                    value["asr_profile"] = "rtx50_int8_float16"
+                    value["asr_compute_type"] = "int8_float16"
+                else:
+                    value["asr_profile"] = "cpu_int8"
+                    value["asr_compute_type"] = "int8"
             return GlobalSettings(**value)
         except (OSError, ValueError, TypeError):
             return GlobalSettings()

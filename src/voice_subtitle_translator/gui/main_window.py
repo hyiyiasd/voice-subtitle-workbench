@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from voice_subtitle_translator import APP_NAME, AUTHOR, BILIBILI_URL, GITHUB_URL, __version__
 from voice_subtitle_translator.credentials import CredentialStore
 from voice_subtitle_translator.domain import ProjectSettings, Segment
+from voice_subtitle_translator.gpu_runtime import GPURuntimeManager, selected_profile
 from voice_subtitle_translator.model_manager import ModelManager
 from voice_subtitle_translator.paths import AppPaths, bundled_resource
 from voice_subtitle_translator.pipeline import PipelineCoordinator
@@ -47,6 +48,7 @@ from voice_subtitle_translator.subtitles import (
 )
 from voice_subtitle_translator.transcription import TranscriptionService
 
+from .gpu_settings_dialog import GPUSettingsDialog
 from .model_manager_dialog import ModelManagerDialog
 from .player import MpvPlayerWidget
 from .translation_settings_dialog import TranslationSettingsDialog
@@ -209,6 +211,7 @@ class TranscriptionThread(QThread):
         paths: AppPaths,
         model_id: str,
         device: str,
+        compute_type: str,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -216,6 +219,7 @@ class TranscriptionThread(QThread):
         self.paths = paths
         self.model_id = model_id
         self.device = device
+        self.compute_type = compute_type
 
     def run(self) -> None:
         try:
@@ -226,7 +230,11 @@ class TranscriptionThread(QThread):
                     paths=self.paths,
                     model_manager=manager,
                     ffmpeg_path=self.paths.root / "runtime" / "ffmpeg.exe",
-                ).run(model_id=self.model_id, device=self.device)
+                ).run(
+                    model_id=self.model_id,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                )
                 count = len(project.list_segments())
             self.succeeded.emit(task_id, count)
         except Exception as exc:
@@ -345,6 +353,8 @@ class MainWindow(QMainWindow):
         resume_queue_action.triggered.connect(self.resume_media_queue)
         models_action = QAction("模型管理", self)
         models_action.triggered.connect(self.show_model_manager)
+        gpu_action = QAction("GPU 推理设置", self)
+        gpu_action.triggered.connect(self.show_gpu_settings)
         transcribe_action = QAction("开始识别", self)
         transcribe_action.triggered.connect(lambda: self.transcribe_media(automatic=False))
         check_action = QAction("检查字幕", self)
@@ -371,6 +381,7 @@ class MainWindow(QMainWindow):
             folder_action,
             resume_queue_action,
             models_action,
+            gpu_action,
             transcribe_action,
             check_action,
             self.problems_action,
@@ -627,6 +638,24 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
+    def show_gpu_settings(self) -> bool:
+        offline = self.project.get_settings().offline if self.project else False
+        dialog = GPUSettingsDialog(
+            GPURuntimeManager(self.paths),
+            profile_id=self.global_settings.asr_profile,
+            offline=offline,
+            parent=self,
+        )
+        if not dialog.exec():
+            return False
+        profile = selected_profile(dialog.selected_profile_id)
+        self.global_settings.asr_profile = profile.id
+        self.global_settings.asr_device = profile.device
+        self.global_settings.asr_compute_type = profile.compute_type
+        self.settings_store.save(self.global_settings)
+        self.statusBar().showMessage(f"已选择 GPU 推理档位：{profile.name}", 6000)
+        return True
+
     def transcribe_media(self, *, automatic: bool = False) -> None:
         if not self._require_project():
             return
@@ -665,26 +694,34 @@ class MainWindow(QMainWindow):
         settings = self.project.get_settings()
         if automatic:
             model_id = settings.asr_model if settings.asr_model in installed else installed[0]
-            device = self.global_settings.asr_device
         else:
             model_id, ok = QInputDialog.getItem(
                 self, "选择识别模型", "模型：", installed, editable=False
             )
             if not ok:
                 return
-            device_label, ok = QInputDialog.getItem(
-                self,
-                "选择运行设备",
-                "设备（GPU 初始化失败时不会静默切换）：",
-                ["CPU (int8)", "CUDA (int8_float16)"],
-                1 if self.global_settings.asr_device == "cuda" else 0,
-                editable=False,
-            )
-            if not ok:
+            if not self.show_gpu_settings():
                 return
-            device = "cuda" if device_label.startswith("CUDA") else "cpu"
-            self.global_settings.asr_device = device
-            self.settings_store.save(self.global_settings)
+        profile = selected_profile(self.global_settings.asr_profile)
+        device = profile.device
+        compute_type = profile.compute_type
+        if device == "cuda" and not GPURuntimeManager(self.paths).is_installed():
+            QMessageBox.information(
+                self,
+                "GPU 运行库未安装",
+                "当前档位需要 CUDA 12.x、cuBLAS 和 cuDNN 9。\n"
+                "请在“GPU 推理设置”中下载绿色运行库；"
+                "程序不会自动改用 CPU。",
+            )
+            if not self.show_gpu_settings():
+                return
+            profile = selected_profile(self.global_settings.asr_profile)
+            device = profile.device
+            compute_type = profile.compute_type
+            if device == "cuda" and not GPURuntimeManager(self.paths).is_installed():
+                if self.current_media_path:
+                    self._set_media_status(self.current_media_path, "等待安装 GPU 运行库")
+                return
         settings.asr_model = model_id
         self.project.save_settings(settings)
         thread = TranscriptionThread(
@@ -692,10 +729,14 @@ class MainWindow(QMainWindow):
             paths=self.paths,
             model_id=model_id,
             device=device,
+            compute_type=compute_type,
             parent=self,
         )
         if self.current_media_path:
-            self._set_media_status(self.current_media_path, f"识别中 · {model_id} / {device}")
+            self._set_media_status(
+                self.current_media_path,
+                f"识别中 · {model_id} / {device} / {compute_type}",
+            )
         self.statusBar().showMessage("正在执行音频标准化、VAD 和识别……")
         thread.succeeded.connect(self._transcription_succeeded)
         thread.failed.connect(self._transcription_failed)
@@ -709,7 +750,9 @@ class MainWindow(QMainWindow):
             self.table_model.refresh()
             self._filter_problem_rows(self.problems_action.isChecked())
         self.statusBar().showMessage(
-            f"识别完成：共 {segment_count} 条字幕（任务 {task_id[:8]}）", 8000
+            f"识别完成：共 {segment_count} 条字幕（任务 {task_id[:8]}）。"
+            "请点击“导出字幕”选择 SRT 输出位置。",
+            10000,
         )
         if segment_count and self.translation_toggle.isChecked():
             if self.current_media_path:
@@ -721,6 +764,16 @@ class MainWindow(QMainWindow):
             self._finish_current_media("未检测到语音")
 
     def _transcription_failed(self, message: str) -> None:
+        if any(
+            marker in message.lower()
+            for marker in ("cublas64_12.dll", "cudnn", "cuda driver", "cuda_error")
+        ):
+            message = (
+                "GPU 运行库未安装完整或与当前显卡不兼容。\n\n"
+                f"原始错误：{message}\n\n"
+                "请打开“GPU 推理设置”，为 RTX 50 系选择推荐档位并"
+                "安装 CUDA 12.9 绿色运行库。程序不会自动切换到 CPU。"
+            )
         QMessageBox.critical(self, "识别失败", message)
         self._finish_current_media("识别失败")
         if self.project:

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from voice_subtitle_translator.gpu_runtime import GPURuntimeManager
+from voice_subtitle_translator.gui.gpu_settings_dialog import GPUSettingsDialog
 from voice_subtitle_translator.gui.main_window import MainWindow
 from voice_subtitle_translator.gui.model_manager_dialog import (
     ModelManagerDialog,
@@ -47,6 +49,21 @@ def test_model_manager_shows_detailed_introduction(qtbot, tmp_path: Path) -> Non
     assert "这不是转文字模型" in dialog.details.toPlainText()
     dialog.table.selectRow(3)
     assert "modelscope.cn → hf-mirror.com → huggingface.co" in dialog.details.toPlainText()
+
+
+def test_gpu_settings_explain_rtx50_and_green_runtime(qtbot, tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure()
+    dialog = GPUSettingsDialog(
+        GPURuntimeManager(paths),
+        profile_id="rtx50_int8_float16",
+        offline=False,
+    )
+    qtbot.addWidget(dialog)
+    assert dialog.profile_combo.count() == 5
+    assert "RTX 50" in dialog.profile_combo.currentText()
+    assert "Blackwell" in dialog.details.toPlainText()
+    assert "1.27 GB" in dialog.runtime_status.text()
 
 
 def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:

@@ -24,6 +24,10 @@ class WorkerClient:
         data_root = Path(os.environ.get("VST_DATA_ROOT", cwd / "data"))
         log_directory = data_root / "logs"
         log_directory.mkdir(parents=True, exist_ok=True)
+        environment = os.environ.copy()
+        gpu_bin = data_root / "gpu-runtime" / "cuda-12.9" / "bin"
+        if gpu_bin.is_dir():
+            environment["PATH"] = f"{gpu_bin}{os.pathsep}{environment.get('PATH', '')}"
         self._stderr = (log_directory / "worker-stderr.log").open("a", encoding="utf-8")
         self._process = subprocess.Popen(
             command,
@@ -33,6 +37,7 @@ class WorkerClient:
             stderr=self._stderr,
             text=True,
             encoding="ascii",
+            env=environment,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 

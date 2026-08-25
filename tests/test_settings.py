@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -43,6 +44,17 @@ def test_translation_service_settings_persist_without_api_key(tmp_path: Path) ->
     assert loaded.translation_provider == "ollama"
     assert loaded.translation_model == "qwen2.5:7b"
     assert "api_key" not in (paths.config / "settings.json").read_text(encoding="utf-8")
+
+
+def test_legacy_cuda_setting_migrates_to_rtx50_profile(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure()
+    (paths.config / "settings.json").write_text(
+        json.dumps({"asr_device": "cuda"}), encoding="utf-8"
+    )
+    loaded = SettingsStore(paths).load()
+    assert loaded.asr_profile == "rtx50_int8_float16"
+    assert loaded.asr_compute_type == "int8_float16"
 
 
 def test_paths_only_create_inside_given_root(tmp_path: Path) -> None:

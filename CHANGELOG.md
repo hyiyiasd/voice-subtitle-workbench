@@ -21,8 +21,11 @@
 - tiny、base、small 增加 ModelScope、HF Mirror、Hugging Face 三级下载策略；所有通道共用固定大小和 SHA-256 校验。
 - 支持拖入或选择整个文件夹，任务队列按目录树展开显示并逐个处理媒体。
 - libmpv 不可用时自动切换至 Qt Multimedia 播放后端。
+- 增加 GPU 推理设置，提供 RTX 50 系、RTX 20/30/40 系、FP16、BF16 和 CPU INT8 档位及详细介绍。
+- 支持按需下载并校验 NVIDIA CUDA 12.9/cuBLAS/cuDNN 绿色运行库，仅保存到 `data\gpu-runtime`。
 
 ### 修复
 
 - 修复 Windows 中文路径经子进程管道传输后损坏，导致“错误的请求 ID”的问题。
 - 补齐 Silero VAD 的必需上下文窗口，修复较长真实录音可能被误判为无语音的问题。
+- 将缺少 `cublas64_12.dll` 等 GPU 运行库的英文异常改为中文指引，且不自动降级 CPU。
