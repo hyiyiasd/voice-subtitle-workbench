@@ -11,7 +11,10 @@ if ($runningPortable) {
 uv run --no-sync pyinstaller --noconfirm voice-subtitle-translator.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller 失败，退出码：$LASTEXITCODE" }
 $portableRoot = Join-Path $ProjectRoot "dist\voice-subtitle-translator"
-foreach ($directory in @("config", "models", "cache", "logs", "temp", "gpu-runtime", "projects")) {
+foreach ($directory in @(
+    "config", "models", "cache", "logs", "temp", "gpu-runtime", "projects",
+    "subtitles\原文", "subtitles\译文", "subtitles\双语"
+)) {
     New-Item -ItemType Directory -Force -Path (Join-Path $portableRoot "data\$directory") | Out-Null
 }
 Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $portableRoot -Force

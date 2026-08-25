@@ -60,6 +60,9 @@ def test_legacy_cuda_setting_migrates_to_rtx50_profile(tmp_path: Path) -> None:
 def test_paths_only_create_inside_given_root(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
     paths.ensure()
+    assert (paths.data / "subtitles" / "原文").is_dir()
+    assert (paths.data / "subtitles" / "译文").is_dir()
+    assert (paths.data / "subtitles" / "双语").is_dir()
     for path in (
         paths.data,
         paths.config,

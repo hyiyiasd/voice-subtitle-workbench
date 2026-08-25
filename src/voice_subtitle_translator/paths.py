@@ -52,6 +52,9 @@ class AppPaths:
             self.logs,
             self.temp,
             self.gpu_runtime,
+            self.data / "subtitles" / "原文",
+            self.data / "subtitles" / "译文",
+            self.data / "subtitles" / "双语",
         ):
             try:
                 directory.mkdir(parents=True, exist_ok=True)

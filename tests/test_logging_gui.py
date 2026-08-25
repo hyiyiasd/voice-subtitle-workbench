@@ -1,7 +1,9 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
 
+from voice_subtitle_translator.domain import Segment
 from voice_subtitle_translator.gpu_runtime import GPURuntimeManager
 from voice_subtitle_translator.gui.batch_operation_dialog import BatchOperationDialog
 from voice_subtitle_translator.gui.gpu_settings_dialog import GPUSettingsDialog
@@ -88,6 +90,7 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     ]
     menu_labels = [action.text() for action in window.menuBar().actions()]
     assert menu_labels == ["项目", "处理", "设置", "窗口", "帮助"]
+    assert window.task_tree.columnCount() == 2
     assert window.task_dock.toggleViewAction().text() == "任务队列"
     assert window.side_dock.toggleViewAction().text() == "翻译上下文"
     assert not hasattr(window, "detail_log")
@@ -135,7 +138,7 @@ def test_folder_media_wait_for_manual_operation_then_process_in_order(
     qtbot.wait(20)
     assert processed == []
     group = window.task_tree.topLevelItem(0)
-    assert [group.child(index).text(1) for index in range(2)] == [
+    assert [window.task_status[media.resolve()] for media in media_files] == [
         "等待选择操作",
         "等待选择操作",
     ]
@@ -144,12 +147,15 @@ def test_folder_media_wait_for_manual_operation_then_process_in_order(
     assert processed == [media.resolve() for media in media_files]
     assert window.task_tree.topLevelItemCount() == 1
     assert group.childCount() == 2
-    assert [group.child(index).text(1) for index in range(2)] == ["已完成", "已完成"]
+    assert [window.task_status[media.resolve()] for media in media_files] == [
+        "已完成",
+        "已完成",
+    ]
     assert group.checkState(0) == Qt.CheckState.Checked
     for index in range(2):
         child = group.child(index)
         assert child.checkState(0) == Qt.CheckState.Checked
-        assert window.task_tree.itemWidget(child, 2) is not None
+        assert window.task_tree.itemWidget(child, 1) is not None
     window.close()
 
 
@@ -164,3 +170,23 @@ def test_batch_dialog_supports_folder_and_individual_selection(qtbot, tmp_path: 
     assert dialog.selected_paths() == [media[0][0].resolve()]
     dialog._set_all(Qt.CheckState.Unchecked)
     assert dialog.selected_paths() == []
+
+
+def test_export_uses_media_name_in_dedicated_srt_folder(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    media = tmp_path / "节目.mp3"
+    media.write_bytes(b"test-owned-media")
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    assert window._load_media_project(media)
+    assert window.project is not None
+    window.project.add_segment(Segment(start_ms=0, end_ms=1000, source_text="字幕"))
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: None)
+    window.export_dialog()
+    output = paths.data / "subtitles" / "原文" / "节目.srt"
+    assert output.is_file()
+    assert "字幕" in output.read_text(encoding="utf-8-sig")
+    window.close()
