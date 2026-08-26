@@ -20,7 +20,8 @@ from voice_subtitle_translator.model_manager import ModelManager
 
 
 class ModelDownloadThread(QThread):
-    progress = Signal(int, int)
+    # Model packages can exceed Qt's signed 32-bit integer range.
+    progress = Signal(object, object)
     succeeded = Signal(str)
     failed = Signal(str)
 
@@ -131,6 +132,11 @@ class ModelManagerDialog(QDialog):
         model_id = str(self.table.item(current_row, 0).data(256))
         model = self.manager.models[model_id]
         descriptor = model.descriptor
+        download_running = bool(
+            self.download_thread and self.download_thread.isRunning()
+        )
+        self.download_button.setEnabled(model.downloadable and not download_running)
+        self.verify_button.setEnabled(bool(model.artifacts) and not download_running)
         availability = "可自动下载" if model.downloadable else "暂不提供自动下载"
         if model.download_mirrors:
             mirror_hosts = " → ".join(_host(url) for url in model.download_mirrors)
@@ -209,8 +215,11 @@ class ModelManagerDialog(QDialog):
 
     def _download_progress(self, completed: int, total: int) -> None:
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, max(total, 1))
-        self.progress_bar.setValue(min(completed, total))
+        scale = 10_000
+        self.progress_bar.setRange(0, scale)
+        self.progress_bar.setValue(
+            min(scale, round(completed / max(total, 1) * scale))
+        )
         self.progress_bar.setFormat(f"{_format_size(completed)} / {_format_size(total)}")
 
     def _verify_selected(self) -> None:

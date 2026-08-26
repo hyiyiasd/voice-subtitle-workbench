@@ -70,20 +70,23 @@ uv run --no-sync voice-subtitle-translator models download reazonspeech-k2-ja
 ## 模型与硬件
 
 - 日语轻量首选：ReazonSpeech K2 日语模型，约 153 MB，无需独立显卡。
+- 日语高质量首选：Kotoba-Whisper v2.0 Faster，约 1.41 GB，针对日语蒸馏并可直接使用 CTranslate2 GPU 推理。
 - 快速预览：faster-whisper `tiny`，约 75 MB，体积最小但准确率较低。
 - 低配置日常使用：faster-whisper `base`，约 141 MB。
 - 通用均衡推荐：faster-whisper `small`，约 464 MB。
 - 复杂音频和正式字幕：faster-whisper `medium`，约 1.43 GB。
+- 完整质量档：faster-whisper `large-v3`，约 2.88 GB，适合复杂日语、噪声和日英混说。
 - RTX 3070 高质量高速档：faster-whisper `large-v3-turbo`，约 1.51 GB。
+- ReazonSpeech NeMo v2 作为数小时日语长音频兼容计划展示；当前没有集成 NeMo/PyTorch 运行时，因此不开放下载或识别。
 - 日英混合 ReazonSpeech K2 `ja-en` 目前只保留兼容条目，上游恢复稳定访问前不开放下载。
 - GPU 推理提供 RTX 50 系推荐、RTX 20/30/40 系均衡、FP16 高精度、BF16 实验和 CPU INT8 档位；RTX 5070 默认推荐 `int8_float16`。
 - VAD、ASR、本地翻译和 GPU 运行包均按需安装，不进入 Git 或主 ZIP。
 
-模型管理器只接受包含固定来源、版本、大小、许可证和 SHA-256 的清单。Silero VAD、ReazonSpeech K2 日语版以及五个 faster-whisper 模型已经固定到具体上游修订，可通过 GUI 或 CLI 按需下载并逐文件校验。模型列表提供简短推荐场景，选中后会显示更完整的语言、速度、精度、硬件需求和适用音频介绍。日英混合模型的官方匿名下载地址当前不可用，因此清单会安全地拒绝自动下载，不会改用来源不明的镜像。
+模型管理器只接受包含固定来源、版本、大小、许可证和 SHA-256 的清单。Silero VAD、ReazonSpeech K2 日语版、Kotoba-Whisper v2.0 Faster 以及六个 faster-whisper 模型已经固定到具体上游修订，可通过 GUI 或 CLI 按需下载并逐文件校验。模型列表提供简短推荐场景，选中后会显示更完整的语言、速度、精度、硬件需求和适用音频介绍。日英混合 K2 与 NeMo v2 只显示兼容计划，当前会安全地拒绝自动下载。
 
 模型管理器会始终显示模型总目录和当前模型安装目录的绝对路径。自动下载失败时，错误窗口也会给出手动放置目录；用户可以自行复制模型文件到该目录，再使用“校验所选”检查文件完整性。
 
-tiny、base、small 按“ModelScope 国内 CDN → `hf-mirror.com` → Hugging Face 官方源”的顺序自动尝试。三个通道均固定到已核对的模型修订；镜像只作为传输通道，模型来源、文件大小和 SHA-256 仍以官方清单为准。镜像返回不同内容时程序会删除临时文件并尝试下一通道，所有通道均失败才会报错。medium 和 large-v3-turbo 在国内镜像连通性完成验证前仍只使用官方源。
+tiny、base、small 按“ModelScope 国内 CDN → `hf-mirror.com` → Hugging Face 官方源”的顺序自动尝试；Kotoba-Whisper v2.0 Faster 和完整 large-v3 按“`hf-mirror.com` → Hugging Face 官方源”的顺序尝试。所有通道都固定到已核对的模型修订；镜像只作为传输通道，模型来源、文件大小和 SHA-256 仍以官方清单为准。镜像返回不同内容时程序会删除临时文件并尝试下一通道，所有通道均失败才会报错。medium 和 large-v3-turbo 在国内镜像连通性完成验证前仍只使用官方源。
 
 媒体音轨优先由便携版 FFmpeg 标准化；开发构建尚未提供经过供应链审计的 FFmpeg 时，会使用随 faster-whisper 安装的 PyAV 运行库解码常见音视频格式。播放器优先使用 libmpv；便携包中未提供 libmpv 时，自动使用 Qt Multimedia 播放音视频。
 

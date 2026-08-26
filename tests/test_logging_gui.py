@@ -52,12 +52,29 @@ def test_model_manager_shows_detailed_introduction(qtbot, tmp_path: Path) -> Non
     manifest = Path(__file__).parents[1] / "models" / "manifest.json"
     dialog = ModelManagerDialog(ModelManager(paths, manifest), offline=False)
     qtbot.addWidget(dialog)
-    assert dialog.table.rowCount() == 8
+    assert dialog.table.rowCount() == 11
     assert "这不是转文字模型" in dialog.details.toPlainText()
     assert str(paths.models.resolve()) in dialog.status.text()
     assert str((paths.models / "silero-vad-v6").resolve()) in dialog.details.toPlainText()
     dialog.table.selectRow(3)
+    assert "尚未集成 NeMo/PyTorch" in dialog.details.toPlainText()
+    assert not dialog.download_button.isEnabled()
+    dialog.table.selectRow(5)
     assert "modelscope.cn → hf-mirror.com → huggingface.co" in dialog.details.toPlainText()
+
+
+def test_model_manager_progress_supports_packages_larger_than_two_gb(
+    qtbot, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path)
+    paths.ensure()
+    manifest = Path(__file__).parents[1] / "models" / "manifest.json"
+    dialog = ModelManagerDialog(ModelManager(paths, manifest), offline=False)
+    qtbot.addWidget(dialog)
+    dialog._download_progress(1_545_417_851, 3_090_835_702)
+    assert dialog.progress_bar.maximum() == 10_000
+    assert dialog.progress_bar.value() == 5_000
+    assert "GB" in dialog.progress_bar.format()
 
 
 def test_gpu_settings_explain_rtx50_and_green_runtime(qtbot, tmp_path: Path) -> None:

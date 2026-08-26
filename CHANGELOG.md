@@ -17,6 +17,9 @@
 - 可持久化的 API、本地 Ollama/LM Studio 和自定义翻译服务设置。
 - 修正模型容量显示放大 1024 倍的问题，并补充 tiny、base、small 三档多语言模型。
 - 模型管理器增加详细介绍、推荐场景、中文语言名称和更清晰的硬件提示。
+- 增加可直接识别的 Kotoba-Whisper v2.0 Faster 日语模型和完整 faster-whisper large-v3，并提供 HF Mirror 回退下载与逐文件 SHA-256 校验。
+- 增加 ReazonSpeech NeMo v2 兼容计划说明；未集成 NeMo/PyTorch 前保持不可下载，避免产生无法使用的权重。
+- 模型下载进度改用比例缩放，支持超过 2 GB 的模型包而不会触发 Qt 整数溢出。
 - 模型下载支持用户现有的 HTTPS 代理设置，离线模式仍会在创建网络客户端前拒绝下载。
 - tiny、base、small 增加 ModelScope、HF Mirror、Hugging Face 三级下载策略；所有通道共用固定大小和 SHA-256 校验。
 - 支持拖入或选择整个文件夹，任务队列按目录树展开显示并逐个处理媒体。

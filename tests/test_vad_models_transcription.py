@@ -136,7 +136,10 @@ def test_bundled_manifest_has_descriptions_and_consistent_sizes(tmp_path: Path) 
         "faster-whisper-base",
         "faster-whisper-small",
         "faster-whisper-medium",
+        "kotoba-whisper-v2-faster",
+        "faster-whisper-large-v3",
         "faster-whisper-large-v3-turbo",
+        "reazonspeech-nemo-v2",
     }.issubset(manager.models)
     for model in manager.models.values():
         assert model.recommendation
@@ -153,6 +156,18 @@ def test_bundled_manifest_has_descriptions_and_consistent_sizes(tmp_path: Path) 
     assert urls[0].startswith("https://modelscope.cn/models/Systran/")
     assert urls[1].startswith("https://hf-mirror.com/Systran/")
     assert urls[-1].startswith("https://huggingface.co/Systran/")
+    kotoba = manager.models["kotoba-whisper-v2-faster"]
+    assert kotoba.downloadable
+    assert kotoba.descriptor.runtime == "ctranslate2"
+    assert _download_urls(kotoba, kotoba.artifacts[0])[0].startswith(
+        "https://hf-mirror.com/kotoba-tech/"
+    )
+    large_v3 = manager.models["faster-whisper-large-v3"]
+    assert large_v3.downloadable
+    assert large_v3.descriptor.size_bytes > 3_000_000_000
+    nemo = manager.models["reazonspeech-nemo-v2"]
+    assert not nemo.downloadable
+    assert not nemo.artifacts
 
 
 def test_transcription_saves_batch_and_removes_chunk(tmp_path: Path, monkeypatch) -> None:

@@ -66,6 +66,73 @@
       ]
     },
     {
+      "id": "kotoba-whisper-v2-faster",
+      "display_name": "Kotoba-Whisper v2.0 Faster（日语高质量）",
+      "source": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster",
+      "version": "f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 1516480096,
+      "languages": ["ja"],
+      "recommended_vram_mb": 4500,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "download_mirrors": [
+        "https://hf-mirror.com/kotoba-tech/kotoba-whisper-v2.0-faster/resolve/f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc"
+      ],
+      "recommendation": "日语高质量首选；RTX 5070 推荐",
+      "description": "面向日语语音识别优化的 Kotoba-Whisper v2.0 CTranslate2 版本，约 7.56 亿参数、总下载量约 1.41 GB。它以 Whisper large-v3 为教师模型并在大规模 ReazonSpeech 日语电视语音上蒸馏训练，官方报告在保持接近 large-v3 日语错误率的同时具有更低延迟。适合动画、广播、访谈、自然口语和需要后续翻译的正式字幕。它只保留两层解码器，因此通常明显快于完整 large-v3；日英频繁混说或极端噪声场景仍建议与完整 large-v3 比较。RTX 5070 建议使用 CUDA int8_float16。",
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster/resolve/f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "60d2bc2e33de9d43f2745be09caefe1161acab670f6796d4a750d8d848382b36",
+          "size_bytes": 1512927867
+        },
+        {
+          "url": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster/resolve/f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc/config.json",
+          "relative_path": "config.json",
+          "sha256": "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9",
+          "size_bytes": 2394
+        },
+        {
+          "url": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster/resolve/f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc/preprocessor_config.json",
+          "relative_path": "preprocessor_config.json",
+          "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+          "size_bytes": 340
+        },
+        {
+          "url": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster/resolve/f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "f70c9740a90657b489cf05b0fa0605c1d497db542f11a70a8cc80a025c94c7d8",
+          "size_bytes": 2481381
+        },
+        {
+          "url": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster/resolve/f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc/vocabulary.json",
+          "relative_path": "vocabulary.json",
+          "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+          "size_bytes": 1068114
+        }
+      ]
+    },
+    {
+      "id": "reazonspeech-nemo-v2",
+      "display_name": "ReazonSpeech NeMo v2（日语长音频）",
+      "source": "https://huggingface.co/reazon-research/reazonspeech-nemo-v2",
+      "version": "33693408be76b7cba9fd4a7546a0a8772430211b",
+      "license": "Apache-2.0",
+      "sha256": "d196d43ad03466ca88beeda4bf5fafb07bab7202d4b663b8e4f12cb0a4381fae",
+      "size_bytes": 2477946880,
+      "languages": ["ja"],
+      "recommended_vram_mb": 8000,
+      "runtime": "nemo/pytorch（未集成）",
+      "downloadable": false,
+      "recommendation": "数小时日语长音频预留；当前不可使用",
+      "description": "ReazonSpeech v2.0 语料训练的 6.19 亿参数日语 RNN-T 模型，采用支持线性扩展注意力的 Fast Conformer，可直接处理最长数小时的日语音频。官方权重约 2.31 GB，但运行还需要体积很大的 NVIDIA NeMo、PyTorch 和配套 CUDA 组件。当前便携版没有注册 NeMo 工作进程，因此这里只展示模型能力和未来兼容计划，不允许下载，也不会把无法运行的依赖放入主程序。",
+      "note": "当前绿色便携版尚未集成 NeMo/PyTorch 运行时；下载权重也无法识别，待独立运行包方案完成后再开放。",
+      "artifacts": []
+    },
+    {
       "id": "reazonspeech-k2-ja-en",
       "display_name": "ReazonSpeech K2 日英双语",
       "source": "https://huggingface.co/reazon-research/reazonspeech-k2-v2-ja-en",
@@ -255,6 +322,56 @@
           "relative_path": "vocabulary.txt",
           "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
           "size_bytes": 459861
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper-large-v3",
+      "display_name": "faster-whisper large-v3（完整高质量）",
+      "source": "https://huggingface.co/Systran/faster-whisper-large-v3",
+      "version": "edaa852ec7e145841d8ffdb056a99866b5f0a478",
+      "license": "MIT",
+      "sha256": "",
+      "size_bytes": 3090835702,
+      "languages": ["multilingual"],
+      "recommended_vram_mb": 6500,
+      "runtime": "ctranslate2",
+      "downloadable": true,
+      "download_mirrors": [
+        "https://hf-mirror.com/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478"
+      ],
+      "recommendation": "最高质量档；复杂日语、噪声和混合语言",
+      "description": "OpenAI Whisper large-v3 的完整 CTranslate2 转换版，约 15.5 亿参数、总下载量约 2.88 GB，是当前列表中规模最大、质量优先的通用识别模型。它支持日语、英语及其他多种语言，适合复杂对白、背景音乐、口音、专有名词和日英混说，也适合作为 Kotoba 或 ReazonSpeech 结果的高质量比较候选。相较 large-v3-turbo，它保留完整解码器，通常更慢并占用更多显存，但在困难音频上更值得尝试。RTX 5070 建议使用 CUDA int8_float16，并保持较小批次。",
+      "artifacts": [
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/model.bin",
+          "relative_path": "model.bin",
+          "sha256": "69f74147e3334731bc3a76048724833325d2ec74642fb52620eda87352e3d4f1",
+          "size_bytes": 3087284237
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/config.json",
+          "relative_path": "config.json",
+          "sha256": "a9306624f5ec14270a014b647e5c316b6e03a662c369758d1b90697a7b0655b9",
+          "size_bytes": 2394
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/preprocessor_config.json",
+          "relative_path": "preprocessor_config.json",
+          "sha256": "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+          "size_bytes": 340
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/tokenizer.json",
+          "relative_path": "tokenizer.json",
+          "sha256": "6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca",
+          "size_bytes": 2480617
+        },
+        {
+          "url": "https://huggingface.co/Systran/faster-whisper-large-v3/resolve/edaa852ec7e145841d8ffdb056a99866b5f0a478/vocabulary.json",
+          "relative_path": "vocabulary.json",
+          "sha256": "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+          "size_bytes": 1068114
         }
       ]
     },
