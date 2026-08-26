@@ -97,28 +97,45 @@ def test_main_window_starts_without_libmpv(qtbot, tmp_path: Path) -> None:
     paths.ensure()
     window = MainWindow(paths)
     qtbot.addWidget(window)
-    assert "当前：第一步仅生成原文 SRT" == window.workflow_label.text()
-    assert window.translation_toggle.isChecked() is False
+    window.show()
+    qtbot.wait(20)
     toolbar_labels = [action.text() for action in window.toolbar.actions() if action.text()]
-    assert toolbar_labels == [
-        "添加媒体",
-        "导入文件夹",
-        "批量操作…",
-        "开始识别",
-        "翻译原文 SRT",
-        "强制暂停",
-        "导出字幕",
-    ]
+    assert toolbar_labels == ["开始识别", "开始翻译"]
     menu_labels = [action.text() for action in window.menuBar().actions()]
     assert menu_labels == ["文件", "处理", "设置", "窗口", "帮助"]
+    file_menu = window.menuBar().actions()[0].menu()
+    process_menu = window.menuBar().actions()[1].menu()
+    assert [action.text() for action in file_menu.actions() if not action.isSeparator()] == [
+        "添加媒体",
+        "导入文件夹",
+        "打开字幕文件夹",
+    ]
+    assert [
+        action.text() for action in process_menu.actions() if not action.isSeparator()
+    ] == [
+        "开始识别",
+        "开始翻译",
+        "批量操作…",
+        "强制暂停",
+        "检查字幕",
+        "仅看问题字幕",
+        "搜索替换",
+    ]
     assert window.task_tree.columnCount() == 1
     assert window.task_dock.toggleViewAction().text() == "任务队列"
     assert window.side_dock.toggleViewAction().text() == "翻译上下文"
+    assert window.side_dock.minimumWidth() == 200
+    assert window.side_dock.width() == 240
+    assert not hasattr(window, "translation_toggle")
+    assert not hasattr(window, "workflow_label")
+    assert not hasattr(window, "export_dialog")
     assert not hasattr(window, "detail_log")
     window.close()
 
 
-def test_dropping_media_creates_green_project_and_starts_recognition(qtbot, tmp_path: Path) -> None:
+def test_loading_media_creates_internal_state_without_starting_recognition(
+    qtbot, tmp_path: Path
+) -> None:
     paths = _paths(tmp_path)
     paths.ensure()
     media = tmp_path / "节目.mp3"
@@ -128,12 +145,105 @@ def test_dropping_media_creates_green_project_and_starts_recognition(qtbot, tmp_
     calls: list[bool] = []
     window.transcribe_media = lambda *, automatic=False: calls.append(automatic)  # type: ignore[method-assign]
     window._ingest_media(media)
-    qtbot.waitUntil(lambda: bool(calls))
-    assert calls == [True]
+    qtbot.wait(20)
+    assert calls == []
     assert window.project is not None
     assert window.project.path.parent == paths.data / "state"
     assert window.project.path.suffix == ".sqlite3"
     assert window.project.resolve_media() == media.resolve()
+    window.close()
+
+
+def test_toolbar_operations_follow_checked_tree_order_and_skip_invalid_inputs(
+    qtbot, tmp_path: Path
+) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    root = tmp_path / "节目"
+    root.mkdir()
+    first = root / "01.mp3"
+    second = root / "02.wav"
+    source = root / "已有字幕.srt"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    source.write_text("1\n00:00:00,000 --> 00:00:01,000\n字幕\n", encoding="utf-8")
+    generated = paths.data / "subtitles" / "原文" / "01.srt"
+    generated.parent.mkdir(parents=True, exist_ok=True)
+    generated.write_text("1\n00:00:00,000 --> 00:00:01,000\n原文\n", encoding="utf-8")
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    window._enqueue_media_files([first, second, source], root)
+    window.task_items[second.resolve()].setCheckState(0, Qt.CheckState.Unchecked)
+    queued: list[tuple[list[Path], str]] = []
+    window._queue_operations = lambda files, operation: queued.append(  # type: ignore[method-assign]
+        (files, operation)
+    )
+
+    window.start_checked_transcription()
+    assert queued == [([first.resolve()], "transcribe")]
+    assert window.task_status[source.resolve()] == "SRT 无需识别"
+
+    queued.clear()
+    window.start_checked_translation()
+    assert queued == [([first.resolve(), source.resolve()], "translate")]
+    window.close()
+
+
+def test_checked_translation_skips_media_without_source_srt(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    media = tmp_path / "missing.mp3"
+    media.write_bytes(b"media")
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    window._enqueue_media_files([media], tmp_path)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    queued: list[tuple[list[Path], str]] = []
+    window._queue_operations = lambda files, operation: queued.append(  # type: ignore[method-assign]
+        (files, operation)
+    )
+    window.start_checked_translation()
+    assert queued == []
+    assert messages == ["勾选的媒体尚未生成原文 SRT，请先执行识别。"]
+    assert window.task_status[media.resolve()] == "缺少原文 SRT · 请先识别"
+    window.close()
+
+
+def test_toolbar_operations_do_nothing_when_no_files_are_checked(
+    qtbot, tmp_path: Path, monkeypatch
+) -> None:
+    paths = _paths(tmp_path / "portable")
+    paths.ensure()
+    media = tmp_path / "unchecked.mp3"
+    media.write_bytes(b"media")
+    window = MainWindow(paths)
+    qtbot.addWidget(window)
+    window._enqueue_media_files([media], tmp_path)
+    window.task_items[media.resolve()].setCheckState(0, Qt.CheckState.Unchecked)
+    messages: list[str] = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "information",
+        lambda _parent, _title, message: messages.append(message),
+    )
+    queued: list[tuple[list[Path], str]] = []
+    window._queue_operations = lambda files, operation: queued.append(  # type: ignore[method-assign]
+        (files, operation)
+    )
+    window.start_checked_transcription()
+    window.start_checked_translation()
+    assert queued == []
+    assert messages == [
+        "请先在任务队列中勾选音视频。",
+        "请先在任务队列中勾选文件。",
+    ]
     window.close()
 
 
@@ -212,22 +322,26 @@ def test_gui_writes_source_srt_without_exposing_project_file(qtbot, tmp_path: Pa
     window.close()
 
 
-def test_enabling_translation_waits_for_explicit_second_step(qtbot, tmp_path: Path) -> None:
+def test_translation_operation_explicitly_enables_project(qtbot, tmp_path: Path) -> None:
     paths = _paths(tmp_path / "portable")
     paths.ensure()
-    project = Project.create_state(paths.data / "state" / "internal.sqlite3")
-    project.add_segment(
-        Segment(order_key=0, start_ms=1_000, end_ms=2_500, source_text="こんにちは")
+    media = tmp_path / "节目.mp3"
+    media.write_bytes(b"owned-media")
+    source = paths.data / "subtitles" / "原文" / "节目.srt"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "1\n00:00:01,000 --> 00:00:02,500\nこんにちは\n", encoding="utf-8"
     )
     window = MainWindow(paths)
     qtbot.addWidget(window)
-    window._set_project(project)
+    window._enqueue_media_files([media], tmp_path)
     calls: list[bool] = []
     window.translate_pending = lambda: calls.append(True)  # type: ignore[method-assign]
-    window.translation_toggle.setChecked(True)
-    qtbot.wait(20)
-    assert calls == []
-    assert project.get_settings().translation_enabled is True
+    window.start_checked_translation()
+    qtbot.waitUntil(lambda: bool(calls))
+    assert calls == [True]
+    assert window.project is not None
+    assert window.project.get_settings().translation_enabled is True
     window.close()
 
 
@@ -275,7 +389,7 @@ def test_batch_dialog_supports_folder_and_individual_selection(qtbot, tmp_path: 
     assert dialog.selected_paths() == []
 
 
-def test_export_uses_media_name_in_dedicated_srt_folder(
+def test_recognition_success_automatically_writes_media_named_srt(
     qtbot, tmp_path: Path, monkeypatch
 ) -> None:
     paths = _paths(tmp_path / "portable")
@@ -288,7 +402,8 @@ def test_export_uses_media_name_in_dedicated_srt_folder(
     assert window.project is not None
     window.project.add_segment(Segment(start_ms=0, end_ms=1000, source_text="字幕"))
     monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: None)
-    window.export_dialog()
+    window.current_media_path = media.resolve()
+    window._transcription_succeeded("task", 1)
     output = paths.data / "subtitles" / "原文" / "节目.srt"
     assert output.is_file()
     assert "字幕" in output.read_text(encoding="utf-8-sig")

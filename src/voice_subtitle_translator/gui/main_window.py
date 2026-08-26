@@ -18,7 +18,6 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDockWidget,
     QFileDialog,
     QGroupBox,
@@ -58,8 +57,6 @@ from voice_subtitle_translator.subtitles import (
     ExportContent,
     ExportFormat,
     InvalidSubtitleError,
-    TranslationUnavailableError,
-    can_export,
     export_subtitles,
     parse_srt,
 )
@@ -348,9 +345,6 @@ class MainWindow(QMainWindow):
         self.toolbar = QToolBar("主工具栏")
         self.toolbar.setMovable(False)
         self.addToolBar(self.toolbar)
-        self.translation_toggle = QCheckBox("启用翻译")
-        self.translation_toggle.toggled.connect(self._translation_toggled)
-        self.workflow_label = QLabel()
 
         self.player = MpvPlayerWidget()
         self.player.initialize(self.paths.root / "runtime" / "libmpv-2.dll")
@@ -390,8 +384,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         self.drop_hint = QLabel(
-            "第一步：加入音视频并手动转文字，生成原文 SRT；"
-            "第二步：选择原文 SRT，生成中文 SRT"
+            "加入音视频或原文 SRT，勾选任务后点击“开始识别”或“开始翻译”"
         )
         self.drop_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.drop_hint.setStyleSheet(
@@ -434,26 +427,26 @@ class MainWindow(QMainWindow):
         side.addTab(self.glossary_edit, "术语")
         self.side_dock = QDockWidget("翻译上下文", self)
         self.side_dock.setObjectName("translation_context_dock")
+        self.side_dock.setMinimumWidth(200)
         self.side_dock.setWidget(side)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.side_dock)
+        self.resizeDocks([self.side_dock], [240], Qt.Orientation.Horizontal)
 
     def _build_actions(self) -> None:
         media_action = QAction("添加媒体", self)
         media_action.triggered.connect(self.add_media)
         folder_action = QAction("导入文件夹", self)
         folder_action.triggered.connect(self.add_media_folder)
-        source_srt_action = QAction("翻译原文 SRT", self)
-        source_srt_action.triggered.connect(self.add_source_srt)
         batch_action = QAction("批量操作…", self)
         batch_action.triggered.connect(self.show_batch_operations)
-        resume_queue_action = QAction("继续队列", self)
-        resume_queue_action.triggered.connect(self.resume_media_queue)
         models_action = QAction("模型管理", self)
         models_action.triggered.connect(self.show_model_manager)
         gpu_action = QAction("GPU 推理设置", self)
         gpu_action.triggered.connect(self.show_gpu_settings)
         transcribe_action = QAction("开始识别", self)
-        transcribe_action.triggered.connect(self.start_selected_transcription)
+        transcribe_action.triggered.connect(self.start_checked_transcription)
+        translate_action = QAction("开始翻译", self)
+        translate_action.triggered.connect(self.start_checked_translation)
         force_pause_action = QAction("强制暂停", self)
         force_pause_action.setToolTip("立即停止当前模型/API 请求并清空尚未开始的队列")
         force_pause_action.triggered.connect(self.force_pause_tasks)
@@ -465,49 +458,22 @@ class MainWindow(QMainWindow):
         replace_action = QAction("搜索替换", self)
         replace_action.setShortcut(QKeySequence.StandardKey.Find)
         replace_action.triggered.connect(self.search_replace)
-        translate_action = QAction("翻译未完成字幕", self)
-        translate_action.triggered.connect(lambda: self.translate_pending())
         translation_settings_action = QAction("翻译服务设置", self)
         translation_settings_action.triggered.connect(self.show_translation_settings)
-        export_action = QAction("导出字幕", self)
-        export_action.setShortcut(QKeySequence.StandardKey.SaveAs)
-        export_action.triggered.connect(self.export_dialog)
         open_subtitles_action = QAction("打开字幕文件夹", self)
         open_subtitles_action.triggered.connect(self.open_subtitle_folder)
         about_action = QAction("关于", self)
         about_action.triggered.connect(self.show_about)
-        for action in (
-            media_action,
-            folder_action,
-            batch_action,
-            transcribe_action,
-            source_srt_action,
-            force_pause_action,
-            export_action,
-        ):
-            self.toolbar.addAction(action)
-        self.toolbar.addSeparator()
-        self.toolbar.addWidget(self.translation_toggle)
-        self.toolbar.addSeparator()
-        self.toolbar.addWidget(self.workflow_label)
+        self.toolbar.addActions((transcribe_action, translate_action))
         project_menu = self.menuBar().addMenu("文件")
-        project_menu.addActions(
-            (
-                media_action,
-                folder_action,
-                source_srt_action,
-                export_action,
-                open_subtitles_action,
-            )
-        )
+        project_menu.addActions((media_action, folder_action, open_subtitles_action))
 
         process_menu = self.menuBar().addMenu("处理")
         process_menu.addActions(
             (
-                batch_action,
-                resume_queue_action,
                 transcribe_action,
                 translate_action,
+                batch_action,
                 force_pause_action,
             )
         )
@@ -536,20 +502,64 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.side_dock)
         self.task_dock.show()
         self.side_dock.show()
+        self.resizeDocks([self.side_dock], [240], Qt.Orientation.Horizontal)
 
-    def start_selected_transcription(self) -> None:
-        item = self.task_tree.currentItem()
-        value = item.data(0, TASK_PATH_ROLE) if item else None
-        if value:
-            path = Path(str(value)).resolve()
-            if path.suffix.lower() == ".srt":
-                QMessageBox.information(
-                    self, "这是字幕文件", "SRT 只能执行翻译，不能进行语音识别。"
-                )
-                return
-            self._queue_operations([path], "transcribe")
+    def _checked_task_paths(self) -> list[Path]:
+        checked: list[Path] = []
+        for group_index in range(self.task_tree.topLevelItemCount()):
+            group = self.task_tree.topLevelItem(group_index)
+            for child_index in range(group.childCount()):
+                child = group.child(child_index)
+                value = child.data(0, TASK_PATH_ROLE)
+                if value and child.checkState(0) == Qt.CheckState.Checked:
+                    checked.append(Path(str(value)).resolve())
+        return checked
+
+    def start_checked_transcription(self) -> None:
+        checked = self._checked_task_paths()
+        if not checked:
+            QMessageBox.information(self, "没有勾选文件", "请先在任务队列中勾选音视频。")
             return
-        self.transcribe_media(automatic=False)
+        media_files: list[Path] = []
+        for path in checked:
+            if path.suffix.lower() == ".srt":
+                self._set_media_status(path, "SRT 无需识别")
+            elif path.suffix.lower() in MEDIA_SUFFIXES:
+                media_files.append(path)
+        if not media_files:
+            QMessageBox.information(self, "没有可识别媒体", "勾选内容中没有音视频文件。")
+            return
+        self._queue_operations(media_files, "transcribe")
+
+    def start_checked_translation(self) -> None:
+        checked = self._checked_task_paths()
+        if not checked:
+            QMessageBox.information(self, "没有勾选文件", "请先在任务队列中勾选文件。")
+            return
+        translatable: list[Path] = []
+        missing_source: list[Path] = []
+        for path in checked:
+            if path.suffix.lower() == ".srt":
+                translatable.append(path)
+                continue
+            source_srt = self.paths.data / "subtitles" / "原文" / f"{path.stem}.srt"
+            if source_srt.is_file():
+                translatable.append(path)
+            else:
+                missing_source.append(path)
+                self._set_media_status(path, "缺少原文 SRT · 请先识别")
+        if not translatable:
+            QMessageBox.information(
+                self,
+                "没有可翻译字幕",
+                "勾选的媒体尚未生成原文 SRT，请先执行识别。",
+            )
+            return
+        if missing_source:
+            self.statusBar().showMessage(
+                f"已跳过 {len(missing_source)} 个缺少原文 SRT 的媒体", 8000
+            )
+        self._queue_operations(translatable, "translate")
 
     def _set_project(self, project: Project | None) -> None:
         if self.project and self.project is not project:
@@ -557,14 +567,6 @@ class MainWindow(QMainWindow):
             self.project.close()
         self.project = project
         self.table_model.set_project(project)
-        self.translation_toggle.blockSignals(True)
-        self.translation_toggle.setChecked(
-            self.global_settings.last_translation_enabled
-            if project is None
-            else project.get_settings().translation_enabled
-        )
-        self.translation_toggle.blockSignals(False)
-        self._update_workflow_label()
         if project:
             self.prompt_edit.setPlainText(project.active_prompt())
             self.glossary_edit.setPlainText(
@@ -662,7 +664,7 @@ class MainWindow(QMainWindow):
         group.setExpanded(True)
         if added:
             self.statusBar().showMessage(
-                f"已加入 {added} 个媒体文件；不会自动识别，请手动开始",
+                f"已加入 {added} 个文件；勾选后点击开始识别或开始翻译",
                 8000,
             )
 
@@ -685,25 +687,6 @@ class MainWindow(QMainWindow):
             self._ingest_media(media)
             return
         self.statusBar().showMessage("任务队列已完成", 5000)
-
-    def resume_media_queue(self) -> None:
-        if self.current_media_path and not (
-            self.transcription_thread and self.transcription_thread.isRunning()
-        ):
-            if self.current_action == "translate":
-                self.translate_pending()
-            elif self.current_action == "transcribe":
-                self.transcribe_media(automatic=True)
-            elif (
-                self.project
-                and self.project.get_settings().translation_enabled
-                and self.project.list_segments()
-            ):
-                self.translate_pending()
-            else:
-                self.transcribe_media(automatic=True)
-            return
-        self._start_next_queued_media()
 
     def _set_media_status(
         self,
@@ -928,40 +911,30 @@ class MainWindow(QMainWindow):
         if not self._load_input_state(media_path):
             self._finish_current_media("导入失败")
             return
-        existing = self.project.list_segments()
         if self.current_action == "transcribe":
             self._set_media_status(media_path, "等待转文字", progress=0)
             QTimer.singleShot(0, lambda: self.transcribe_media(automatic=True))
             return
         if self.current_action == "translate":
-            if not existing:
-                self._finish_current_media("无法翻译 · 尚无原文字幕")
+            source_srt = self._source_srt_path()
+            if source_srt is None or not source_srt.is_file():
+                self._finish_current_media("无法翻译 · 缺少原文 SRT")
                 return
             settings = self.project.get_settings()
             settings.translation_enabled = True
             self.project.save_settings(settings)
-            self.translation_toggle.blockSignals(True)
-            self.translation_toggle.setChecked(True)
-            self.translation_toggle.blockSignals(False)
-            self._update_workflow_label()
             self._set_media_status(media_path, "等待翻译", progress=0)
             QTimer.singleShot(0, self.translate_pending)
             return
+        existing = self.project.list_segments()
         if existing:
             self._set_media_status(media_path, f"已恢复 {len(existing)} 条字幕")
             self.statusBar().showMessage(
                 f"已恢复该媒体的 {len(existing)} 条字幕；可继续校对或重新识别", 8000
             )
-            if self.translation_toggle.isChecked() and any(
-                not segment.has_valid_translation for segment in existing
-            ):
-                self._set_media_status(media_path, "等待翻译")
-                QTimer.singleShot(0, self.translate_pending)
-            else:
-                self._finish_current_media("已完成")
+            self._finish_current_media("已加载")
         else:
-            self._set_media_status(media_path, "等待识别", progress=0)
-            QTimer.singleShot(0, lambda: self.transcribe_media(automatic=True))
+            self._finish_current_media("等待选择操作")
 
     def _load_input_state(self, path: Path) -> bool:
         if path.suffix.lower() == ".srt":
@@ -998,9 +971,7 @@ class MainWindow(QMainWindow):
             else:
                 project = Project.create_state(
                     state_path,
-                    ProjectSettings(
-                        translation_enabled=self.global_settings.last_translation_enabled
-                    ),
+                    ProjectSettings(translation_enabled=False),
                 )
             if migrated_legacy and project.has_timeline_regressions():
                 migration_removed = project.discard_unlocked_segments()
@@ -1051,10 +1022,6 @@ class MainWindow(QMainWindow):
             settings.translation_enabled = True
             project.save_settings(settings)
             self._set_project(project)
-            self.translation_toggle.blockSignals(True)
-            self.translation_toggle.setChecked(True)
-            self.translation_toggle.blockSignals(False)
-            self._update_workflow_label()
             self.global_settings.last_project = str(state_path)
             self.settings_store.save(self.global_settings)
             self._show_task_details(source_path)
@@ -1199,10 +1166,15 @@ class MainWindow(QMainWindow):
             self.table_model.refresh()
             self._filter_problem_rows(self.problems_action.isChecked())
         if segment_count:
+            target = self._srt_output_path(ExportContent.SOURCE)
             try:
                 path = self._write_current_srt(ExportContent.SOURCE)
             except Exception as exc:
-                QMessageBox.critical(self, "原文 SRT 保存失败", str(exc))
+                QMessageBox.critical(
+                    self,
+                    "原文 SRT 保存失败",
+                    f"目标路径：\n{target}\n\n错误：{exc}",
+                )
                 self._finish_current_media("识别完成 · SRT 保存失败")
                 return
             self.statusBar().showMessage(
@@ -1240,25 +1212,6 @@ class MainWindow(QMainWindow):
             self.table_model.refresh()
         self._finish_current_media("已强制暂停")
         self.statusBar().showMessage("任务已强制暂停；已完成批次已经保存", 8000)
-
-    def _translation_toggled(self, checked: bool) -> None:
-        self.global_settings.last_translation_enabled = checked
-        self.settings_store.save(self.global_settings)
-        if self.project:
-            PipelineCoordinator(self.project).set_translation_enabled(checked)
-        self._update_workflow_label()
-        self.statusBar().showMessage(
-            "已启用翻译；请点击“翻译原文 SRT”开始第二步"
-            if checked
-            else "已关闭翻译；不会发起新的翻译请求",
-            6000,
-        )
-
-    def _update_workflow_label(self) -> None:
-        if self.translation_toggle.isChecked():
-            self.workflow_label.setText("当前：分两步生成原文 SRT 和中文 SRT")
-        else:
-            self.workflow_label.setText("当前：第一步仅生成原文 SRT")
 
     def check_quality(self) -> None:
         if not self._require_project():
@@ -1423,10 +1376,15 @@ class MainWindow(QMainWindow):
             )
             self._finish_current_media(f"翻译已暂停 · {completed} 条")
         else:
+            target = self._srt_output_path(ExportContent.TRANSLATION)
             try:
                 path = self._write_current_srt(ExportContent.TRANSLATION)
             except Exception as exc:
-                QMessageBox.critical(self, "中文 SRT 保存失败", str(exc))
+                QMessageBox.critical(
+                    self,
+                    "中文 SRT 保存失败",
+                    f"目标路径：\n{target}\n\n错误：{exc}",
+                )
                 self._finish_current_media("翻译完成 · SRT 保存失败")
                 return
             self.statusBar().showMessage(
@@ -1478,7 +1436,7 @@ class MainWindow(QMainWindow):
             return (self.paths.data / "subtitles" / "原文" / f"{media.stem}.srt").resolve()
         return None
 
-    def _write_current_srt(self, content: ExportContent) -> Path:
+    def _srt_output_path(self, content: ExportContent) -> Path:
         if not self.project:
             raise RuntimeError("当前没有可用字幕。")
         source_srt = self._source_srt_path()
@@ -1494,7 +1452,12 @@ class MainWindow(QMainWindow):
             ExportContent.TRANSLATION: "中文",
             ExportContent.BILINGUAL: "双语",
         }[content]
-        path = self.paths.data / "subtitles" / directory / f"{stem}.srt"
+        return (self.paths.data / "subtitles" / directory / f"{stem}.srt").resolve()
+
+    def _write_current_srt(self, content: ExportContent) -> Path:
+        if not self.project:
+            raise RuntimeError("当前没有可用字幕。")
+        path = self._srt_output_path(content)
         export_subtitles(
             self.project.list_segments(),
             path,
@@ -1505,57 +1468,6 @@ class MainWindow(QMainWindow):
             self.project.set_meta("source_srt", str(path.resolve()))
             self.project.set_meta("source_srt_invalid", "0")
         return path.resolve()
-
-    def export_dialog(self) -> None:
-        if not self._require_project():
-            return
-        source_srt = self._source_srt_path()
-        media = self.project.resolve_media()
-        source_name = source_srt or media
-        if source_name is None:
-            QMessageBox.information(self, "没有字幕", "请先识别媒体或选择原文 SRT。")
-            return
-        choices = ["原文"]
-        allowed, reason = can_export(self.project.list_segments(), ExportContent.TRANSLATION)
-        if allowed:
-            choices.extend(["中文", "双语"])
-        if len(choices) == 1:
-            content_name = "原文"
-        else:
-            content_name, ok = QInputDialog.getItem(
-                self, "导出内容", "内容：", choices, editable=False
-            )
-            if not ok:
-                return
-        content_map = {
-            "原文": ExportContent.SOURCE,
-            "中文": ExportContent.TRANSLATION,
-            "双语": ExportContent.BILINGUAL,
-        }
-        output_directory = self.paths.data / "subtitles" / content_name
-        output_directory.mkdir(parents=True, exist_ok=True)
-        path = output_directory / f"{source_name.stem}.srt"
-        if path.exists():
-            answer = QMessageBox.question(
-                self,
-                "覆盖已有字幕",
-                f"字幕文件已经存在：\n{path}\n\n是否覆盖？",
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        try:
-            path = self._write_current_srt(content_map[content_name])
-            self.statusBar().showMessage(f"已导出：{path}", 5000)
-            QMessageBox.information(
-                self,
-                "导出完成",
-                f"已按原文件名导出：\n{path}\n\n"
-                "可通过“文件 → 打开字幕文件夹”查看。",
-            )
-        except TranslationUnavailableError:
-            QMessageBox.information(self, "无法导出译文", reason)
-        except Exception as exc:
-            QMessageBox.critical(self, "导出失败", str(exc))
 
     def open_subtitle_folder(self) -> None:
         root = self.paths.data / "subtitles"
